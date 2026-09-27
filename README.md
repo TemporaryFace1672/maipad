@@ -9,7 +9,7 @@ picture streamed back onto the iPad so it feels like a small cabinet.
   latency readout
 - Everything runs over the USB cable (no Wi-Fi needed, no firewall prompts)
 
-> Not affiliated with SEGA. No game files, keychips or keys are included or needed from this repo. You must supply your own
+> Not affiliated with SEGA. No game files, keychips or keys are included or needed from this repo. You must supply your own. Refrain from asking for game data in discussions
 > legally obtained game setup. This project only emulates the *input device*.
 
 ## How it works
