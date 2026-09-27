@@ -7,6 +7,8 @@
 using System;
 using System.Collections.Generic;
 using System.Diagnostics;
+using System.Drawing;
+using System.Drawing.Imaging;
 using System.IO;
 using System.IO.Ports;
 using System.Net;
@@ -221,6 +223,152 @@ namespace MaiTouchBridgeApp
                 return c;
             }
             catch (Exception e) { error = e.Message; try { c.Close(); } catch { } return null; }
+        }
+    }
+
+    // Streams the bottom (circle) square of the game window to the iPad app as JPEG frames: [uint32 length LE][jpeg bytes].
+    // The app switches it on/off with a "V<size>,<quality>" line ("V0" = off). Only this thread writes to the socket.
+    class Video
+    {
+        delegate bool EnumProc(IntPtr h, IntPtr l);
+        [DllImport("user32.dll")] static extern bool EnumWindows(EnumProc p, IntPtr l);
+        [DllImport("user32.dll", CharSet = CharSet.Unicode)] static extern int GetWindowText(IntPtr h, StringBuilder s, int n);
+        [DllImport("user32.dll")] static extern bool IsWindowVisible(IntPtr h);
+        [DllImport("user32.dll")] static extern bool IsIconic(IntPtr h);
+        [DllImport("user32.dll")] static extern bool GetClientRect(IntPtr h, out RECT r);
+        [DllImport("user32.dll")] static extern bool ClientToScreen(IntPtr h, ref POINT p);
+        [DllImport("user32.dll")] static extern IntPtr GetDC(IntPtr h);
+        [DllImport("user32.dll")] static extern int ReleaseDC(IntPtr h, IntPtr dc);
+        [DllImport("user32.dll")] static extern bool SetProcessDPIAware();
+        [DllImport("gdi32.dll")] static extern IntPtr CreateCompatibleDC(IntPtr dc);
+        [DllImport("gdi32.dll")] static extern IntPtr CreateCompatibleBitmap(IntPtr dc, int w, int h);
+        [DllImport("gdi32.dll")] static extern IntPtr SelectObject(IntPtr dc, IntPtr o);
+        [DllImport("gdi32.dll")] static extern bool DeleteObject(IntPtr o);
+        [DllImport("gdi32.dll")] static extern bool DeleteDC(IntPtr dc);
+        [DllImport("gdi32.dll")] static extern bool StretchBlt(IntPtr dst, int x, int y, int w, int h, IntPtr src, int sx, int sy, int sw, int sh, uint rop);
+        [DllImport("gdi32.dll")] static extern int SetStretchBltMode(IntPtr dc, int mode);
+        [StructLayout(LayoutKind.Sequential)] struct RECT { public int L, T, R, B; }
+        [StructLayout(LayoutKind.Sequential)] struct POINT { public int X, Y; }
+
+        readonly NetworkStream ns;
+        volatile int size = 0, quality = 65;
+        volatile bool stop;
+        Thread thread;
+        readonly object cfgLock = new object();
+
+        public Video(NetworkStream s) { ns = s; }
+
+        public void Configure(string arg)
+        {
+            string[] p = arg.Split(',');
+            int sz = 0, q = 65;
+            int.TryParse(p[0], out sz);
+            if (p.Length > 1) int.TryParse(p[1], out q);
+            if (sz != 0) sz = Math.Max(256, Math.Min(1080, sz));
+            q = Math.Max(30, Math.Min(95, q));
+            lock (cfgLock)
+            {
+                size = sz; quality = q;
+                if (sz != 0 && thread == null)
+                {
+                    thread = new Thread(Loop); thread.IsBackground = true; thread.Priority = ThreadPriority.AboveNormal; thread.Start();
+                }
+            }
+            Program.Log("video " + (sz == 0 ? "off" : "on: " + sz + "x" + sz + " q" + q));
+        }
+
+        public void Stop() { stop = true; }
+
+        static IntPtr FindGame()
+        {
+            IntPtr f = IntPtr.Zero;
+            EnumWindows(delegate(IntPtr h, IntPtr l)
+            {
+                if (!IsWindowVisible(h)) return true;
+                StringBuilder sb = new StringBuilder(64); GetWindowText(h, sb, 64);
+                if (sb.ToString() == "Sinmai") { f = h; return false; }
+                return true;
+            }, IntPtr.Zero);
+            return f;
+        }
+
+        void Loop()
+        {
+            try { SetProcessDPIAware(); } catch { }
+            ImageCodecInfo jpeg = null;
+            foreach (ImageCodecInfo c in ImageCodecInfo.GetImageEncoders()) if (c.MimeType == "image/jpeg") jpeg = c;
+            IntPtr screen = GetDC(IntPtr.Zero);
+            IntPtr mem = IntPtr.Zero, bmp = IntPtr.Zero;
+            int curSize = 0, curQ = -1;
+            EncoderParameters ep = null;
+            IntPtr game = IntPtr.Zero;
+            Stopwatch sw = new Stopwatch(), stat = Stopwatch.StartNew();
+            int frames = 0; long bytes = 0; double capMs = 0, totMs = 0, maxMs = 0;
+            byte[] hdr = new byte[4];
+            bool waiting = false;
+            try
+            {
+                while (!stop)
+                {
+                    int sz = size;
+                    if (sz == 0) { Thread.Sleep(50); continue; }
+                    if (game == IntPtr.Zero || !IsWindowVisible(game)) game = FindGame();
+                    RECT cr;
+                    if (game == IntPtr.Zero || IsIconic(game) || !GetClientRect(game, out cr) || cr.R - cr.L < 64 || cr.B - cr.T < cr.R - cr.L)
+                    {
+                        game = IntPtr.Zero;
+                        if (!waiting) { waiting = true; Program.Log("video: waiting for the game window"); }
+                        Thread.Sleep(200); continue;
+                    }
+                    waiting = false;
+                    if (sz != curSize)
+                    {
+                        if (bmp != IntPtr.Zero) { SelectObject(mem, IntPtr.Zero); DeleteObject(bmp); }
+                        if (mem == IntPtr.Zero) mem = CreateCompatibleDC(screen);
+                        bmp = CreateCompatibleBitmap(screen, sz, sz);
+                        SelectObject(mem, bmp);
+                        SetStretchBltMode(mem, 4);   // HALFTONE: smooth downscale
+                        curSize = sz;
+                    }
+                    if (quality != curQ)
+                    {
+                        curQ = quality;
+                        ep = new EncoderParameters(1);
+                        ep.Param[0] = new EncoderParameter(System.Drawing.Imaging.Encoder.Quality, (long)curQ);
+                    }
+                    sw.Restart();
+                    int side = cr.R - cr.L;
+                    POINT org = new POINT(); ClientToScreen(game, ref org);
+                    StretchBlt(mem, 0, 0, sz, sz, screen, org.X, org.Y + (cr.B - cr.T) - side, side, side, 0x00CC0020);
+                    double cap = sw.Elapsed.TotalMilliseconds;
+                    byte[] jpg;
+                    using (Bitmap b = Image.FromHbitmap(bmp))
+                    using (MemoryStream ms = new MemoryStream(96 * 1024))
+                    {
+                        b.Save(ms, jpeg, ep);
+                        jpg = ms.ToArray();
+                    }
+                    BitConverter.GetBytes(jpg.Length).CopyTo(hdr, 0);
+                    ns.Write(hdr, 0, 4);
+                    ns.Write(jpg, 0, jpg.Length);
+                    double tot = sw.Elapsed.TotalMilliseconds;
+                    frames++; bytes += jpg.Length; capMs += cap; totMs += tot; if (tot > maxMs) maxMs = tot;
+                    if (stat.ElapsedMilliseconds >= 5000)
+                    {
+                        Program.Log(string.Format("video: {0:F1} fps, {1} KB/frame, capture {2:F1} ms, total {3:F1} ms (max {4:F0}), {5:F1} MB/s",
+                            frames * 1000.0 / stat.ElapsedMilliseconds, bytes / Math.Max(frames, 1) / 1024, capMs / Math.Max(frames, 1), totMs / Math.Max(frames, 1), maxMs, bytes / 1048576.0 * 1000.0 / stat.ElapsedMilliseconds));
+                        frames = 0; bytes = 0; capMs = 0; totMs = 0; maxMs = 0; stat.Restart();
+                    }
+                    if (tot < 15) Thread.Sleep(1);   // the screen grab already waits for the refresh; this only stops a runaway loop
+                }
+            }
+            catch (Exception e) { Program.Log("video stopped: " + e.Message); }
+            finally
+            {
+                if (bmp != IntPtr.Zero) { SelectObject(mem, IntPtr.Zero); DeleteObject(bmp); }
+                if (mem != IntPtr.Zero) DeleteDC(mem);
+                ReleaseDC(IntPtr.Zero, screen);
+            }
         }
     }
 
@@ -478,11 +626,14 @@ namespace MaiTouchBridgeApp
 
         static void RunUsbSession(TcpClient c)
         {
+            Video vid = null;
             int now = Interlocked.Increment(ref clients);
             Log("iPad app connected over USB (" + now + " client(s))");
             try
             {
                 NetworkStream ns = c.GetStream();
+                c.SendBufferSize = 64 * 1024;   // keep little video queued so it never lags behind the game
+                vid = new Video(ns);
                 byte[] buf = new byte[256];
                 StringBuilder line = new StringBuilder();
                 while (true)
@@ -499,12 +650,14 @@ namespace MaiTouchBridgeApp
                         if (msgCount <= 12) Log("iPad message: " + msg);
                         if (msg[0] == 'S') OnSensors(msg.Substring(1));
                         else if (msg[0] == 'B') OnExtra(msg.Substring(1));
+                        else if (msg[0] == 'V') vid.Configure(msg.Substring(1));
                     }
                 }
             }
             catch { }
             finally
             {
+                if (vid != null) vid.Stop();
                 try { c.Close(); } catch { }
                 int left = Interlocked.Decrement(ref clients);
                 Log("iPad app disconnected (" + left + " client(s) left)");

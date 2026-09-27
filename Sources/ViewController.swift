@@ -16,6 +16,8 @@ final class ViewController: UIViewController {
         super.viewDidLoad()
         pad.onSensors = { [weak self] s in self?.server.setSensors(s) }
         pad.onButtons = { [weak self] s in self?.server.setButtons(s) }
+        pad.onVideoToggle = { [weak self] on in self?.server.setVideo(on) }
+        server.onFrame = { [weak self] img in self?.pad.showFrame(img) }
         server.onStatus = { [weak self] connected in self?.pad.setConnected(connected) }
         server.start()
     }

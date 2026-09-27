@@ -5,6 +5,16 @@ import UIKit
 final class PadView: UIView {
     var onSensors: ((String) -> Void)?
     var onButtons: ((String) -> Void)?
+    var onVideoToggle: ((Bool) -> Void)?
+
+    private let videoLayer = CALayer()
+    private let toggleLabel = UILabel()
+    private var toggleFrame = CGRect.zero
+    private var videoOn = true
+    private var gotFrame = false
+    private var pendingFrame: CGImage?
+    private let frameLock = NSLock()
+    private var frameScheduled = false
 
     // order matches the bridge: select, test, service, coin, card
     private let buttonTitles = ["SELECT", "TEST", "SERVICE", "COIN", "CARD"]
@@ -50,6 +60,20 @@ final class PadView: UIView {
         backdrop.lineWidth = 2
         layer.addSublayer(backdrop)
 
+        videoLayer.contentsGravity = .resize
+        videoLayer.masksToBounds = true
+        videoLayer.isHidden = true
+        layer.addSublayer(videoLayer)
+
+        toggleLabel.font = UIFont.systemFont(ofSize: 13, weight: .semibold)
+        toggleLabel.textAlignment = .center
+        toggleLabel.layer.cornerRadius = 8
+        toggleLabel.layer.borderWidth = 1
+        toggleLabel.clipsToBounds = true
+        toggleLabel.isUserInteractionEnabled = false
+        addSubview(toggleLabel)
+        updateToggleLabel()
+
         for i in 0..<34 {
             let sl = CAShapeLayer()
             sl.fillColor = fillColor(index: i, on: false).cgColor
@@ -84,14 +108,67 @@ final class PadView: UIView {
 
     func setConnected(_ c: Bool) {
         connected = c
+        if !c && gotFrame {
+            gotFrame = false
+            videoLayer.isHidden = true
+            render()
+        }
         statusLabel.text = c ? "PC connected" : "Waiting for PC (USB)"
         statusLabel.textColor = c ? UIColor(red: 0.36, green: 0.88, blue: 0.54, alpha: 1) : UIColor(red: 1, green: 0.42, blue: 0.42, alpha: 1)
     }
 
     private func fillColor(index: Int, on: Bool) -> UIColor {
         let outer = index < 8
-        if on { return outer ? onOuter : onColor }
+        let overlay = videoOn && gotFrame   // sensors turn into a see-through overlay above the game picture
+        if on { return (outer ? onOuter : onColor).withAlphaComponent(overlay ? 0.45 : 1) }
+        if overlay { return UIColor.clear }
         return outer ? offOuter : offColor
+    }
+
+    private func updateToggleLabel() {
+        toggleLabel.text = videoOn ? "VIDEO ON" : "VIDEO OFF"
+        toggleLabel.textColor = videoOn ? UIColor(red: 0.02, green: 0.13, blue: 0.17, alpha: 1) : .white
+        toggleLabel.backgroundColor = videoOn ? UIColor(red: 0.3, green: 0.88, blue: 1.0, alpha: 1) : UIColor(red: 0.09, green: 0.11, blue: 0.16, alpha: 1)
+        toggleLabel.layer.borderColor = UIColor(red: 0.2, green: 0.23, blue: 0.36, alpha: 1).cgColor
+    }
+
+    /// Called from a background queue with each decoded game frame; only the newest one is drawn.
+    func showFrame(_ img: CGImage) {
+        frameLock.lock()
+        pendingFrame = img
+        let schedule = !frameScheduled
+        frameScheduled = true
+        frameLock.unlock()
+        if !schedule { return }
+        DispatchQueue.main.async {
+            self.frameLock.lock()
+            let f = self.pendingFrame
+            self.pendingFrame = nil
+            self.frameScheduled = false
+            self.frameLock.unlock()
+            guard let frame = f, self.videoOn else { return }
+            CATransaction.begin()
+            CATransaction.setDisableActions(true)
+            self.videoLayer.contents = frame
+            self.videoLayer.isHidden = false
+            CATransaction.commit()
+            if !self.gotFrame {
+                self.gotFrame = true
+                self.render()
+            }
+        }
+    }
+
+    private func setVideoOn(_ on: Bool) {
+        videoOn = on
+        if !on {
+            gotFrame = false
+            videoLayer.isHidden = true
+            videoLayer.contents = nil
+        }
+        updateToggleLabel()
+        render()
+        onVideoToggle?(on)
     }
 
     // MARK: layout
@@ -122,6 +199,8 @@ final class PadView: UIView {
         CATransaction.begin()
         CATransaction.setDisableActions(true)
         backdrop.path = UIBezierPath(ovalIn: ring).cgPath
+        videoLayer.frame = ring
+        videoLayer.cornerRadius = ring.width / 2
         for i in 0..<34 {
             let raw = sensorRaw[i]
             let path = UIBezierPath()
@@ -139,6 +218,8 @@ final class PadView: UIView {
 
         statusLabel.sizeToFit()
         statusLabel.frame.origin = CGPoint(x: safe.minX + 10, y: safe.minY + 4)
+        toggleLabel.frame = CGRect(x: statusLabel.frame.maxX + 12, y: safe.minY + 2, width: 92, height: 28)
+        toggleFrame = toggleLabel.frame.insetBy(dx: -10, dy: -10)
     }
 
     private func layoutButtons(in area: CGRect, vertical: Bool) {
@@ -162,7 +243,13 @@ final class PadView: UIView {
     // MARK: touch
 
     override func touchesBegan(_ touches: Set<UITouch>, with event: UIEvent?) {
-        for t in touches { active.insert(t) }
+        for t in touches {
+            if toggleFrame.contains(t.location(in: self)) {
+                setVideoOn(!videoOn)
+            } else {
+                active.insert(t)
+            }
+        }
         recompute()
     }
 

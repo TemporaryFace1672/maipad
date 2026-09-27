@@ -9,7 +9,13 @@ Use an iPad as the maimai DX (segatools) touch panel and buttons on PC: 34-senso
 
 ## Build the bridge
 ```
-C:\Windows\Microsoft.NET\Framework64\v4.0.30319\csc.exe /optimize /out:MaiTouchBridge.exe MaiTouchBridge.cs
+C:\Windows\Microsoft.NET\Framework64\v4.0.30319\csc.exe /optimize /r:System.Drawing.dll /out:MaiTouchBridge.exe MaiTouchBridge.cs
 ```
 Needs com0com pairs COM3<->COM5 (and COM4<->COM6) and `DummyTouchPanel=0` in mai2.ini. Requires iTunes / Apple Devices (Apple Mobile Device Service) for the USB route.
 Protocol: text lines `S` + 34 bits (A1-8,B1-8,C1-2,D1-8,E1-8) and `B` + 5 bits (select,test,service,coin,card).
+
+## Video streaming (this branch)
+The bridge can stream the bottom (circle) half of the game window to the iPad as JPEG frames over the same USB connection
+(`V<size>,<quality>` line from the app turns it on; frames are `[uint32 LE length][jpeg]`). The app draws it behind the sensors,
+which become a see-through overlay; tap **VIDEO ON/OFF** (top of the screen) to toggle. `pc/CaptureBench.cs` measures capture/encode cost.
+Build the bridge with `/r:System.Drawing.dll` added to the csc command.
