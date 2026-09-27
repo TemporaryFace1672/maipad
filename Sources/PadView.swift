@@ -1,24 +1,18 @@
 import UIKit
 
-/// Draws the maimai touch ring (34 sensors) plus Select/Test/Service/Coin/Card buttons and turns
-/// multi-touch into the sensor/button strings the PC bridge expects.
+/// Draws the maimai touch ring (34 sensors) over the game picture, plus Select/Test/Service/Coin/Card buttons,
+/// and turns multi-touch into the sensor/button strings the PC bridge expects.
 final class PadView: UIView {
     var onSensors: ((String) -> Void)?
     var onButtons: ((String) -> Void)?
     var onVideoToggle: ((Bool) -> Void)?
+    var onVideoSettingsChanged: (() -> Void)?
 
-    private let videoLayer = CALayer()
-    private let toggleLabel = UILabel()
-    private var toggleFrame = CGRect.zero
-    private var videoOn = true
-    private var gotFrame = false
-    private var pendingFrame: CGImage?
-    private let frameLock = NSLock()
-    private var frameScheduled = false
+    private let settings = Settings.shared
+    private let click = ClickPlayer()
 
     // order matches the bridge: select, test, service, coin, card
     private let buttonTitles = ["SELECT", "TEST", "SERVICE", "COIN", "CARD"]
-    private let buttonOrderOnScreen = [0, 3, 4, 1, 2]
 
     private var sensorLayers: [CAShapeLayer] = []
     private var sensorPaths: [UIBezierPath] = []
@@ -27,12 +21,25 @@ final class PadView: UIView {
     private let statusLabel = UILabel()
     private let backdrop = CAShapeLayer()
 
+    private let videoLayer = CALayer()
+    private let toggleLabel = UILabel()
+    private let settingsLabel = UILabel()
+    private var toggleFrame = CGRect.zero
+    private var settingsFrame = CGRect.zero
+    private var videoOn = true
+    private var gotFrame = false
+    private var pendingFrame: CGImage?
+    private let frameLock = NSLock()
+    private var frameScheduled = false
+    private var panel: SettingsPanel?
+
     private var active = Set<UITouch>()
     private var sensorOn = [Bool](repeating: false, count: 34)
     private var buttonOn = [Bool](repeating: false, count: 5)
     private var lastS = ""
     private var lastB = ""
     private var connected = false
+    private var lastStats = LinkStats()
 
     private let offColor = UIColor(red: 0.11, green: 0.13, blue: 0.21, alpha: 1)
     private let offOuter = UIColor(red: 0.13, green: 0.17, blue: 0.29, alpha: 1)
@@ -54,6 +61,7 @@ final class PadView: UIView {
         backgroundColor = UIColor(red: 0.04, green: 0.05, blue: 0.08, alpha: 1)
         isMultipleTouchEnabled = true
         isExclusiveTouch = true
+        videoOn = settings.videoOn
 
         backdrop.fillColor = UIColor(red: 0.06, green: 0.07, blue: 0.13, alpha: 1).cgColor
         backdrop.strokeColor = lineColor.cgColor
@@ -64,15 +72,6 @@ final class PadView: UIView {
         videoLayer.masksToBounds = true
         videoLayer.isHidden = true
         layer.addSublayer(videoLayer)
-
-        toggleLabel.font = UIFont.systemFont(ofSize: 14, weight: .semibold)
-        toggleLabel.textAlignment = .center
-        toggleLabel.layer.cornerRadius = 10
-        toggleLabel.layer.borderWidth = 2
-        toggleLabel.clipsToBounds = true
-        toggleLabel.isUserInteractionEnabled = false
-        addSubview(toggleLabel)
-        updateToggleLabel()
 
         for i in 0..<34 {
             let sl = CAShapeLayer()
@@ -85,26 +84,44 @@ final class PadView: UIView {
         }
 
         for i in 0..<5 {
-            let l = UILabel()
-            l.text = buttonTitles[i]
-            l.textAlignment = .center
-            l.textColor = .white
-            l.font = UIFont.systemFont(ofSize: 14, weight: .semibold)
-            l.backgroundColor = UIColor(red: 0.09, green: 0.11, blue: 0.16, alpha: 1)
-            l.layer.cornerRadius = 10
-            l.layer.borderWidth = 2
-            l.layer.borderColor = UIColor(red: 0.2, green: 0.23, blue: 0.36, alpha: 1).cgColor
-            l.clipsToBounds = true
-            l.isUserInteractionEnabled = false
+            let l = makeButtonLabel(buttonTitles[i])
             addSubview(l)
             buttonViews.append(l)
         }
+        for l in [toggleLabel, settingsLabel] {
+            styleButtonLabel(l)
+            addSubview(l)
+        }
+        settingsLabel.text = "SETTINGS"
+        updateToggleLabel()
 
-        statusLabel.font = UIFont.systemFont(ofSize: 13, weight: .medium)
+        statusLabel.font = UIFont.monospacedDigitSystemFont(ofSize: 12, weight: .medium)
+        statusLabel.numberOfLines = 0
         statusLabel.isUserInteractionEnabled = false
         addSubview(statusLabel)
         setConnected(false)
     }
+
+    private func makeButtonLabel(_ text: String) -> UILabel {
+        let l = UILabel()
+        l.text = text
+        styleButtonLabel(l)
+        return l
+    }
+
+    private func styleButtonLabel(_ l: UILabel) {
+        l.textAlignment = .center
+        l.textColor = .white
+        l.font = UIFont.systemFont(ofSize: 14, weight: .semibold)
+        l.backgroundColor = UIColor(red: 0.09, green: 0.11, blue: 0.16, alpha: 1)
+        l.layer.cornerRadius = 10
+        l.layer.borderWidth = 2
+        l.layer.borderColor = UIColor(red: 0.2, green: 0.23, blue: 0.36, alpha: 1).cgColor
+        l.clipsToBounds = true
+        l.isUserInteractionEnabled = false
+    }
+
+    // MARK: status / info
 
     func setConnected(_ c: Bool) {
         connected = c
@@ -113,23 +130,38 @@ final class PadView: UIView {
             videoLayer.isHidden = true
             render()
         }
-        statusLabel.text = c ? "PC connected" : "Waiting for PC (USB)"
-        statusLabel.textColor = c ? UIColor(red: 0.36, green: 0.88, blue: 0.54, alpha: 1) : UIColor(red: 1, green: 0.42, blue: 0.42, alpha: 1)
+        updateStatusText()
     }
 
-    private func fillColor(index: Int, on: Bool) -> UIColor {
-        let outer = index < 8
-        let overlay = videoOn && gotFrame   // sensors turn into a see-through overlay above the game picture
-        if on { return (outer ? onOuter : onColor).withAlphaComponent(overlay ? 0.10 : 1) }
-        if overlay { return UIColor.clear }
-        return outer ? offOuter : offColor
+    func showStats(_ s: LinkStats) {
+        lastStats = s
+        updateStatusText()
     }
+
+    private func updateStatusText() {
+        var text = connected ? "PC connected" : "Waiting for PC (USB)"
+        statusLabel.textColor = connected ? UIColor(red: 0.36, green: 0.88, blue: 0.54, alpha: 1) : UIColor(red: 1, green: 0.42, blue: 0.42, alpha: 1)
+        if settings.showReadout && connected {
+            let s = lastStats
+            let refreshMs = 1000.0 / Double(max(UIScreen.main.maximumFramesPerSecond, 1))
+            let estimate = s.pcMs + s.rttMs / 2 + s.decodeMs + refreshMs / 2
+            text += String(format: "\nvideo %ld fps  %ld KB/frame  dropped %ld", s.fps, s.frameKB, s.dropped)
+            text += String(format: "\nUSB round trip %.1f ms", s.rttMs)
+            text += String(format: "\nPC capture+encode %.1f ms  decode %.1f ms", s.pcMs, s.decodeMs)
+            if videoOn && s.fps > 0 {
+                text += String(format: "\nvideo delay ~%.0f ms (estimate)", estimate)
+            }
+        }
+        statusLabel.text = text
+        setNeedsLayout()
+    }
+
+    // MARK: video
 
     private func updateToggleLabel() {
         toggleLabel.text = videoOn ? "VIDEO ON" : "VIDEO OFF"
         toggleLabel.textColor = videoOn ? UIColor(red: 0.02, green: 0.13, blue: 0.17, alpha: 1) : .white
         toggleLabel.backgroundColor = videoOn ? UIColor(red: 0.3, green: 0.88, blue: 1.0, alpha: 1) : UIColor(red: 0.09, green: 0.11, blue: 0.16, alpha: 1)
-        toggleLabel.layer.borderColor = UIColor(red: 0.2, green: 0.23, blue: 0.36, alpha: 1).cgColor
     }
 
     /// Called from a background queue with each decoded game frame; only the newest one is drawn.
@@ -161,6 +193,7 @@ final class PadView: UIView {
 
     private func setVideoOn(_ on: Bool) {
         videoOn = on
+        settings.videoOn = on
         if !on {
             gotFrame = false
             videoLayer.isHidden = true
@@ -168,7 +201,71 @@ final class PadView: UIView {
         }
         updateToggleLabel()
         render()
+        updateStatusText()
         onVideoToggle?(on)
+    }
+
+    // MARK: colours
+
+    private var overlay: Bool { return videoOn && gotFrame }
+
+    private func fillColor(index: Int, on: Bool) -> UIColor {
+        let outer = index < 8
+        let glow = CGFloat(settings.glowOpacity)
+        if on { return (outer ? onOuter : onColor).withAlphaComponent(overlay ? glow : 1) }
+        if overlay { return UIColor.clear }
+        return outer ? offOuter : offColor
+    }
+
+    private func render() {
+        let stroke = lineColor.withAlphaComponent(overlay ? CGFloat(settings.outlineOpacity) : 1).cgColor
+        CATransaction.begin()
+        CATransaction.setDisableActions(true)
+        for i in 0..<34 {
+            sensorLayers[i].fillColor = fillColor(index: i, on: sensorOn[i]).cgColor
+            sensorLayers[i].strokeColor = stroke
+        }
+        CATransaction.commit()
+        for i in 0..<5 {
+            let on = buttonOn[i]
+            buttonViews[i].backgroundColor = on ? UIColor(red: 0.3, green: 0.88, blue: 1.0, alpha: 1) : UIColor(red: 0.09, green: 0.11, blue: 0.16, alpha: 1)
+            buttonViews[i].textColor = on ? UIColor(red: 0.02, green: 0.13, blue: 0.17, alpha: 1) : .white
+        }
+    }
+
+    // MARK: settings
+
+    private func openSettings() {
+        panel?.removeFromSuperview()
+        active.removeAll()
+        recompute()
+        let p = SettingsPanel(frame: bounds)
+        p.autoresizingMask = [.flexibleWidth, .flexibleHeight]
+        p.onClose = { [weak self] in
+            self?.panel?.removeFromSuperview()
+            self?.panel = nil
+        }
+        p.onChanged = { [weak self] in self?.applySettings() }
+        p.onVideoParamsCommitted = { [weak self] in self?.onVideoSettingsChanged?() }
+        p.onVideoSwitch = { [weak self] on in self?.setVideoOn(on) }
+        p.onReset = { [weak self] in
+            Settings.shared.reset()
+            self?.videoOn = Settings.shared.videoOn
+            self?.updateToggleLabel()
+            self?.applySettings()
+            self?.onVideoSettingsChanged?()
+            self?.onVideoToggle?(Settings.shared.videoOn)
+            self?.openSettings()
+        }
+        addSubview(p)
+        panel = p
+    }
+
+    private func applySettings() {
+        setNeedsLayout()
+        layoutIfNeeded()
+        render()
+        updateStatusText()
     }
 
     // MARK: layout
@@ -177,7 +274,7 @@ final class PadView: UIView {
         super.layoutSubviews()
         let safe = bounds.inset(by: safeAreaInsets)
         // game picture / sensor ring: as large as fits, centred; small buttons live in the top corners
-        let size = min(safe.width, safe.height) - 8
+        let size = (min(safe.width, safe.height) - 8) * CGFloat(settings.ringScale)
         let ring = CGRect(x: safe.midX - size / 2, y: safe.midY - size / 2, width: size, height: size)
         layoutButtons(in: safe)
 
@@ -203,34 +300,47 @@ final class PadView: UIView {
         }
         CATransaction.commit()
 
-        statusLabel.sizeToFit()
-        statusLabel.frame.origin = CGPoint(x: safe.minX + 10, y: safe.maxY - statusLabel.frame.height - 4)
+        let maxW = max(safe.width - 20, 100)
+        let fit = statusLabel.sizeThatFits(CGSize(width: maxW, height: CGFloat.greatestFiniteMagnitude))
+        statusLabel.frame = CGRect(x: safe.minX + 10, y: safe.maxY - fit.height - 4, width: fit.width, height: fit.height)
     }
 
     private func layoutButtons(in safe: CGRect) {
         let w: CGFloat = 96, h: CGFloat = 42, gap: CGFloat = 8, margin: CGFloat = 10
-        let left = [0, 3, 4]     // select, coin, card
-        let right = [1, 2]       // test, service (+ the video toggle below them)
-        for (slot, idx) in left.enumerated() {
-            let f = CGRect(x: safe.minX + margin, y: safe.minY + margin + CGFloat(slot) * (h + gap), width: w, height: h)
-            buttonFrames[idx] = f
-            buttonViews[idx].frame = f
+        var left = [0, 3, 4]     // select, coin, card
+        var right = [1, 2]       // test, service (+ video toggle and settings below them)
+        if settings.leftHanded { swap(&left, &right) }
+        let leftX = safe.minX + margin
+        let rightX = safe.maxX - margin - w
+        func place(_ list: [Int], x: CGFloat) -> Int {
+            for (slot, idx) in list.enumerated() {
+                let f = CGRect(x: x, y: safe.minY + margin + CGFloat(slot) * (h + gap), width: w, height: h)
+                buttonFrames[idx] = f
+                buttonViews[idx].frame = f
+            }
+            return list.count
         }
-        for (slot, idx) in right.enumerated() {
-            let f = CGRect(x: safe.maxX - margin - w, y: safe.minY + margin + CGFloat(slot) * (h + gap), width: w, height: h)
-            buttonFrames[idx] = f
-            buttonViews[idx].frame = f
-        }
-        toggleLabel.frame = CGRect(x: safe.maxX - margin - w, y: safe.minY + margin + CGFloat(right.count) * (h + gap), width: w, height: h)
+        let nLeft = place(left, x: leftX)
+        let nRight = place(right, x: rightX)
+        // the two extra buttons go in whichever column has fewer buttons, below its last one
+        let extraX = nRight <= nLeft ? rightX : leftX
+        let extraStart = min(nRight, nLeft)
+        toggleLabel.frame = CGRect(x: extraX, y: safe.minY + margin + CGFloat(extraStart) * (h + gap), width: w, height: h)
+        settingsLabel.frame = CGRect(x: extraX, y: safe.minY + margin + CGFloat(extraStart + 1) * (h + gap), width: w, height: h)
         toggleFrame = toggleLabel.frame.insetBy(dx: -4, dy: -4)
+        settingsFrame = settingsLabel.frame.insetBy(dx: -4, dy: -4)
     }
 
     // MARK: touch
 
     override func touchesBegan(_ touches: Set<UITouch>, with event: UIEvent?) {
         for t in touches {
-            if toggleFrame.contains(t.location(in: self)) {
+            let p = t.location(in: self)
+            if toggleFrame.contains(p) {
                 setVideoOn(!videoOn)
+            } else if settingsFrame.contains(p) {
+                openSettings()
+                return
             } else {
                 active.insert(t)
             }
@@ -252,9 +362,42 @@ final class PadView: UIView {
         recompute()
     }
 
+    private func sensorIndex(at p: CGPoint) -> Int? {
+        for i in 0..<sensorPaths.count where sensorPaths[i].contains(p) {
+            return i
+        }
+        return nil
+    }
+
+    /// One finger -> sensors. With sensitivity 0 only the touch point counts; above that the finger is treated as a disc,
+    /// so it can cover several inner sensors, but never more than one of the eight ring-button sensors.
+    private func markSensors(at p: CGPoint, sensitivity: CGFloat, into s: inout [Bool]) {
+        if sensitivity <= 0.01 {
+            if let i = sensorIndex(at: p) { s[i] = true }
+            return
+        }
+        let r = sensitivity * 28
+        var counts = [Int](repeating: 0, count: 34)
+        if let i = sensorIndex(at: p) { counts[i] += 2 }
+        for k in 0..<8 {
+            let a = CGFloat(k) * CGFloat.pi / 4
+            let q = CGPoint(x: p.x + cos(a) * r, y: p.y + sin(a) * r)
+            if let i = sensorIndex(at: q) { counts[i] += 1 }
+        }
+        var best = -1
+        var bestCount = 0
+        for i in 0..<8 where counts[i] > bestCount {
+            best = i
+            bestCount = counts[i]
+        }
+        if best >= 0 { s[best] = true }
+        for i in 8..<34 where counts[i] > 0 { s[i] = true }
+    }
+
     private func recompute() {
         var s = [Bool](repeating: false, count: 34)
         var b = [Bool](repeating: false, count: 5)
+        let sensitivity = CGFloat(settings.touchSensitivity)
         for t in active {
             let p = t.location(in: self)
             var hitButton = false
@@ -263,11 +406,16 @@ final class PadView: UIView {
                 hitButton = true
             }
             if hitButton { continue }
-            for i in 0..<sensorPaths.count where sensorPaths[i].contains(p) {
-                s[i] = true
-                break
-            }
+            markSensors(at: p, sensitivity: sensitivity, into: &s)
         }
+
+        if settings.soundOn {
+            var pressed = false
+            for i in 0..<8 where s[i] && !sensorOn[i] { pressed = true }
+            for i in 0..<5 where b[i] && !buttonOn[i] { pressed = true }
+            if pressed { click.click(volume: Float(settings.soundVolume)) }
+        }
+
         sensorOn = s
         buttonOn = b
         render()
@@ -281,22 +429,6 @@ final class PadView: UIView {
         if bb != lastB {
             lastB = bb
             onButtons?(bb)
-        }
-    }
-
-    private func render() {
-        CATransaction.begin()
-        CATransaction.setDisableActions(true)
-        let stroke = lineColor.withAlphaComponent(videoOn && gotFrame ? 0.4 : 1).cgColor
-        for i in 0..<34 {
-            sensorLayers[i].fillColor = fillColor(index: i, on: sensorOn[i]).cgColor
-            sensorLayers[i].strokeColor = stroke
-        }
-        CATransaction.commit()
-        for i in 0..<5 {
-            let on = buttonOn[i]
-            buttonViews[i].backgroundColor = on ? UIColor(red: 0.3, green: 0.88, blue: 1.0, alpha: 1) : UIColor(red: 0.09, green: 0.11, blue: 0.16, alpha: 1)
-            buttonViews[i].textColor = on ? UIColor(red: 0.02, green: 0.13, blue: 0.17, alpha: 1) : .white
         }
     }
 }

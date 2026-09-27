@@ -13,10 +13,12 @@ jobs:
         run: xcodegen generate
       - name: Build (unsigned)
         run: |
-          xcodebuild -project MaiPad.xcodeproj -scheme MaiPad -configuration Release \
-            -sdk iphoneos -derivedDataPath build \
-            CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY="" \
-            build
+          set -o pipefail
+          xcodebuild -project MaiPad.xcodeproj -scheme MaiPad -configuration Release             -sdk iphoneos -derivedDataPath build             CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY=""             build 2>&1 | tee build.log
+      - name: Report compile errors
+        if: failure()
+        run: |
+          grep -E "error:" build.log | sort -u | head -30 | while IFS= read -r line; do echo "::error::$line"; done
       - name: Package IPA
         run: |
           mkdir Payload

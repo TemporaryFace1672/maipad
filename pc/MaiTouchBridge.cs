@@ -254,6 +254,7 @@ namespace MaiTouchBridgeApp
         [StructLayout(LayoutKind.Sequential)] struct POINT { public int X, Y; }
 
         readonly NetworkStream ns;
+        readonly object wlock = new object();
         volatile int size = 0, quality = 65;
         volatile bool stop;
         Thread thread;
@@ -281,6 +282,16 @@ namespace MaiTouchBridgeApp
         }
 
         public void Stop() { stop = true; }
+
+        // Small text message to the app: [uint32 length | 0x80000000][ascii]  ("O<id>" ping answer, "T<ms>" timings)
+        public void SendControl(string text)
+        {
+            byte[] p = Encoding.ASCII.GetBytes(text);
+            byte[] f = new byte[4 + p.Length];
+            BitConverter.GetBytes((uint)p.Length | 0x80000000u).CopyTo(f, 0);
+            Buffer.BlockCopy(p, 0, f, 4, p.Length);
+            try { lock (wlock) { ns.Write(f, 0, f.Length); } } catch { }
+        }
 
         // A full-size (1080x1920) game window is taller than most monitors. The picture we stream is only the bottom
         // square, so while streaming we slide the window up until that square is on screen (SWP_NOSIZE|NOZORDER|NOACTIVATE).
@@ -340,6 +351,7 @@ namespace MaiTouchBridgeApp
             int frames = 0; long bytes = 0; double capMs = 0, totMs = 0, maxMs = 0;
             byte[] hdr = new byte[4];
             bool waiting = false;
+            Stopwatch sec = Stopwatch.StartNew(); int secFrames = 0; double secTot = 0;
             try
             {
                 while (!stop)
@@ -384,11 +396,18 @@ namespace MaiTouchBridgeApp
                         b.Save(ms, jpeg, ep);
                         jpg = ms.ToArray();
                     }
-                    BitConverter.GetBytes(jpg.Length).CopyTo(hdr, 0);
-                    ns.Write(hdr, 0, 4);
-                    ns.Write(jpg, 0, jpg.Length);
+                    byte[] pkt = new byte[4 + jpg.Length];
+                    BitConverter.GetBytes(jpg.Length).CopyTo(pkt, 0);
+                    Buffer.BlockCopy(jpg, 0, pkt, 4, jpg.Length);
+                    lock (wlock) { ns.Write(pkt, 0, pkt.Length); }
                     double tot = sw.Elapsed.TotalMilliseconds;
                     frames++; bytes += jpg.Length; capMs += cap; totMs += tot; if (tot > maxMs) maxMs = tot;
+                    secFrames++; secTot += tot;
+                    if (sec.ElapsedMilliseconds >= 1000)
+                    {
+                        SendControl("T" + (secTot / Math.Max(secFrames, 1)).ToString("F1", System.Globalization.CultureInfo.InvariantCulture) + "," + secFrames);
+                        secFrames = 0; secTot = 0; sec.Restart();
+                    }
                     if (stat.ElapsedMilliseconds >= 5000)
                     {
                         Program.Log(string.Format("video: {0:F1} fps, {1} KB/frame, capture {2:F1} ms, total {3:F1} ms (max {4:F0}), {5:F1} MB/s",
@@ -684,10 +703,11 @@ namespace MaiTouchBridgeApp
                         string msg = line.ToString(); line.Length = 0;
                         if (msg.Length == 0) continue;
                         msgCount++;
-                        if (msgCount <= 12) Log("iPad message: " + msg);
+                        if (msgCount <= 12 && msg[0] != 'P') Log("iPad message: " + msg);
                         if (msg[0] == 'S') OnSensors(msg.Substring(1));
                         else if (msg[0] == 'B') OnExtra(msg.Substring(1));
                         else if (msg[0] == 'V') vid.Configure(msg.Substring(1));
+                        else if (msg[0] == 'P') vid.SendControl("O" + msg.Substring(1));
                     }
                 }
             }
