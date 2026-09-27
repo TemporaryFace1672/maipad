@@ -14,15 +14,15 @@ set SW=1080
 set SH=1920
 echo Game window: !SW!x!SH!
 
-start "MaiTouchBridge" /min "C:\Games\MaiIpad\MaiTouchBridge.exe"
+start "MaiTouchBridge" /min "%~dp0MaiTouchBridge\MaiTouchBridge.exe"
 timeout /t 2 /nobreak >nul
 echo.
-echo Open one of these addresses in Safari on the iPad (also saved in C:\Games\MaiIpad\url.txt):
-type "C:\Games\MaiIpad\url.txt"
+echo Open one of these addresses in Safari on the iPad (also saved in MaiTouchBridge\url.txt):
+type "%~dp0MaiTouchBridge\url.txt"
 echo.
 
 rem Keep the game window focused for the whole session (the bridge presses the ring buttons as keyboard keys).
-start "" /min powershell -NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File "C:\Games\MaiDXR\FocusGame\focus_game.ps1" -Keep
+start "" /min powershell -NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File "%~dp0MaiTouchBridge\focus_game.ps1" -Keep
 start "AM Daemon" /min inject -d -k mai2hook.dll amdaemon.exe -f -c config_common.json config_server.json config_client.json config_hook.json
 inject -d -k mai2hook.dll sinmai -screen-fullscreen 0 -popupwindow -screen-width !SW! -screen-height !SH!
 
