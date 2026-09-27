@@ -2,7 +2,7 @@ name: MaiPad
 options:
   bundleIdPrefix: com.maipad
   deploymentTarget:
-    iOS: "13.0"
+    iOS: "14.0"
 targets:
   MaiPad:
     type: application

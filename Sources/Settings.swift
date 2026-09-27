@@ -67,9 +67,32 @@ final class Settings {
         set { d.set(newValue, forKey: "showReadout") }
     }
 
+    // portrait top-screen strip
+    var topStripOn: Bool {
+        get { return flag("topStripOn", false) }
+        set { d.set(newValue, forKey: "topStripOn") }
+    }
+    var topStripWidth: Int {
+        get { return Int(num("topStripWidth", 900)) }
+        set { d.set(newValue, forKey: "topStripWidth") }
+    }
+
+    // custom background photo (the file itself lives in Documents/background.jpg)
+    var customBackgroundOn: Bool {
+        get { return flag("customBackgroundOn", false) }
+        set { d.set(newValue, forKey: "customBackgroundOn") }
+    }
+    static var backgroundURL: URL {
+        return FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0].appendingPathComponent("background.jpg")
+    }
+    var hasBackgroundFile: Bool {
+        return FileManager.default.fileExists(atPath: Settings.backgroundURL.path)
+    }
+
     func reset() {
         for k in ["videoOn", "videoSize", "videoQuality", "outlineOpacity", "glowOpacity", "ringScale",
-                  "leftHanded", "touchSensitivity", "soundOn", "soundVolume", "showReadout"] {
+                  "leftHanded", "touchSensitivity", "soundOn", "soundVolume", "showReadout",
+                  "topStripOn", "topStripWidth", "customBackgroundOn"] {
             d.removeObject(forKey: k)
         }
     }

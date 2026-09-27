@@ -23,8 +23,9 @@ final class PadServer {
     static let port: UInt16 = 24870
 
     var onStatus: ((Bool) -> Void)?
-    var onFrame: ((CGImage) -> Void)?    // called on a background queue
-    var onStats: ((LinkStats) -> Void)?  // called on the main queue once a second
+    var onFrame: ((CGImage) -> Void)?     // called on a background queue: main circle picture
+    var onTopFrame: ((CGImage) -> Void)?  // called on a background queue: portrait top-screen strip
+    var onStats: ((LinkStats) -> Void)?   // called on the main queue once a second
 
     private let queue = DispatchQueue(label: "maipad.server")
     private let decodeQueue = DispatchQueue(label: "maipad.decode")
@@ -36,6 +37,8 @@ final class PadServer {
     private var inbox = Data()
     private var decoding = false
     private var pendingJpeg: Data?
+    private var topDecoding = false
+    private var pendingTopJpeg: Data?
 
     private var timer: DispatchSourceTimer?
     private var framesThisSec = 0
@@ -82,7 +85,9 @@ final class PadServer {
 
     private func sendVideoRequest() {
         let st = Settings.shared
-        sendLine(videoWanted ? "V\(st.videoSize),\(st.videoQuality)" : "V0")
+        guard videoWanted else { sendLine("V0"); return }
+        let top = st.topStripOn ? ",\(st.topStripWidth),\(max(30, st.videoQuality - 15))" : ""
+        sendLine("V\(st.videoSize),\(st.videoQuality)\(top)")
     }
 
     private func startListener() {
@@ -184,13 +189,16 @@ final class PadServer {
         }
     }
 
-    /// Splits the incoming bytes into frames; only the newest complete picture is decoded (older ones are dropped).
+    /// Splits the incoming bytes into frames; only the newest complete picture of each kind is decoded (older ones dropped).
+    /// Length word: bit31 = control text, bit30 = top-screen-strip picture (only meaningful when bit31 is clear).
     private func drainFrames() {
         var newest: Data?
+        var newestTop: Data?
         while inbox.count >= 4 {
             let raw = UInt32(inbox[0]) | (UInt32(inbox[1]) << 8) | (UInt32(inbox[2]) << 16) | (UInt32(inbox[3]) << 24)
             let isControl = (raw & 0x8000_0000) != 0
-            let len = Int(raw & 0x7FFF_FFFF)
+            let isTop = !isControl && (raw & 0x4000_0000) != 0
+            let len = Int(raw & 0x3FFF_FFFF)
             if len <= 0 || len > 4_000_000 {
                 inbox = Data()   // out of sync, wait for the next connection / frame boundary
                 return
@@ -200,6 +208,9 @@ final class PadServer {
             inbox = inbox.subdata(in: (4 + len)..<inbox.count)
             if isControl {
                 handleControl(payload)
+            } else if isTop {
+                if newestTop != nil { droppedThisSec += 1 }
+                newestTop = payload
             } else {
                 framesThisSec += 1
                 bytesThisSec += payload.count
@@ -208,6 +219,7 @@ final class PadServer {
             }
         }
         if let jpeg = newest { decode(jpeg) }
+        if let jpeg = newestTop { decodeTop(jpeg) }
     }
 
     private func handleControl(_ payload: Data) {
@@ -244,6 +256,28 @@ final class PadServer {
                         self.decodeCount += 1
                     }
                     self.onFrame?(img)
+                }
+            }
+        }
+    }
+
+    private func decodeTop(_ jpeg: Data) {
+        pendingTopJpeg = jpeg
+        if topDecoding { return }
+        topDecoding = true
+        decodeQueue.async {
+            while true {
+                var next: Data?
+                self.queue.sync {
+                    next = self.pendingTopJpeg
+                    self.pendingTopJpeg = nil
+                    if next == nil { self.topDecoding = false }
+                }
+                guard let jpg = next else { return }
+                let opts = [kCGImageSourceShouldCacheImmediately: true] as CFDictionary
+                if let src = CGImageSourceCreateWithData(jpg as CFData, nil),
+                   let img = CGImageSourceCreateImageAtIndex(src, 0, opts) {
+                    self.onTopFrame?(img)
                 }
             }
         }

@@ -21,9 +21,15 @@ final class ClosureButton: UIButton {
 final class SettingsPanel: UIView {
     var onClose: (() -> Void)?
     var onChanged: (() -> Void)?                 // a setting changed, apply it now
-    var onVideoParamsCommitted: (() -> Void)?    // video size / quality slider released
+    var onVideoParamsCommitted: (() -> Void)?    // video size / quality / top-strip-width slider released
     var onVideoSwitch: ((Bool) -> Void)?
+    var onTopStripSwitch: ((Bool) -> Void)?
+    var onBackgroundSwitch: ((Bool) -> Void)?
+    var onPickBackground: (() -> Void)?
+    var onRemoveBackground: (() -> Void)?
     var onReset: (() -> Void)?
+
+    private let backgroundStatusLabel = UILabel()
 
     private let s = Settings.shared
     private let card = UIView()
@@ -117,6 +123,43 @@ final class SettingsPanel: UIView {
         sliderRow("Tap sound volume", min: 0, max: 1, step: 0.05, value: Float(s.soundVolume),
                   format: { "\(Int(($0 * 100).rounded()))%" }, commitsVideo: false) { [weak self] v in self?.s.soundVolume = Double(v); self?.onChanged?() }
 
+        section("Portrait top screen")
+        switchRow("Show top screen strip (portrait only)", s.topStripOn) { [weak self] on in
+            self?.s.topStripOn = on
+            self?.onChanged?()
+            self?.onTopStripSwitch?(on)
+        }
+        sliderRow("Top strip width", min: 400, max: 1080, step: 40, value: Float(s.topStripWidth),
+                  format: { "\(Int($0)) px" }, commitsVideo: true) { [weak self] v in self?.s.topStripWidth = Int(v) }
+
+        section("Background")
+        switchRow("Custom background photo", s.customBackgroundOn) { [weak self] on in
+            self?.s.customBackgroundOn = on
+            self?.onChanged?()
+            self?.onBackgroundSwitch?(on)
+        }
+        backgroundStatusLabel.textColor = dimColor
+        backgroundStatusLabel.font = UIFont.systemFont(ofSize: 14)
+        updateBackgroundStatus()
+        stack.addArrangedSubview(backgroundStatusLabel)
+
+        let choose = ClosureButton(type: .system)
+        choose.setTitle("Choose photo\u{2026}", for: .normal)
+        choose.titleLabel?.font = UIFont.systemFont(ofSize: 17, weight: .semibold)
+        choose.addTarget(choose, action: #selector(ClosureButton.tapped), for: .touchUpInside)
+        choose.onTap = { [weak self] in self?.onPickBackground?() }
+        choose.heightAnchor.constraint(equalToConstant: 40).isActive = true
+        stack.addArrangedSubview(choose)
+
+        let remove = ClosureButton(type: .system)
+        remove.setTitle("Remove photo", for: .normal)
+        remove.titleLabel?.font = UIFont.systemFont(ofSize: 16)
+        remove.setTitleColor(dimColor, for: .normal)
+        remove.addTarget(remove, action: #selector(ClosureButton.tapped), for: .touchUpInside)
+        remove.onTap = { [weak self] in self?.onRemoveBackground?(); self?.updateBackgroundStatus() }
+        remove.heightAnchor.constraint(equalToConstant: 32).isActive = true
+        stack.addArrangedSubview(remove)
+
         section("Info")
         switchRow("Show latency / connection readout", s.showReadout) { [weak self] on in self?.s.showReadout = on; self?.onChanged?() }
 
@@ -128,6 +171,10 @@ final class SettingsPanel: UIView {
         reset.onTap = { [weak self] in self?.onReset?() }
         reset.heightAnchor.constraint(equalToConstant: 44).isActive = true
         stack.addArrangedSubview(reset)
+    }
+
+    func updateBackgroundStatus() {
+        backgroundStatusLabel.text = s.hasBackgroundFile ? "Photo set" : "No photo chosen yet"
     }
 
     private func section(_ text: String) {

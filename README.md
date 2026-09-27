@@ -5,8 +5,10 @@ picture streamed back onto the iPad so it feels like a small cabinet.
 
 - 34-sensor touch ring with multi-touch, plus Select / Test / Service / Coin / Card buttons
 - Game picture (the circle screen) streamed to the iPad at up to native 1080x1080, about 60 fps
+- Portrait mode can also show a strip of the top screen (song info, score, credits) above a smaller ring
+- Optional custom background photo behind the ring when video is off
 - One Settings menu: picture size/quality, overlay opacity, ring size, left-handed layout, touch sensitivity, tap sound,
-  latency readout
+  latency readout, top-screen strip, background photo
 - Everything runs over the USB cable (no Wi-Fi needed, no firewall prompts)
 
 > Not affiliated with SEGA. No game files, keychips or keys are included or needed from this repo. You must supply your own
@@ -100,6 +102,17 @@ Tap **SETTINGS** in the app. Turn on the latency readout and adjust the game's a
 - `iPad found but app not open on the iPad`: open MaiPad and keep it in the foreground.
 - "Untrusted developer" on the iPad: see step 3 of the setup. It needs internet once, and a VPN or private DNS on the iPad can block the check.
 
+**Portrait mode / top-screen strip**
+- Turn it on in Settings ("Show top screen strip"). It only shows in portrait orientation, with the ring shrunk to make room.
+- The bridge captures the whole game window once per frame and cuts both the ring picture and the top strip out of that
+  single capture, so asking for the strip barely adds any cost on the PC side.
+- What's actually up there depends on the game screen: mostly black on some screens, a banner or score/ticket bar on others.
+
+**Custom background**
+- In Settings, choose a photo, then turn "Custom background photo" on. It shows full-screen behind the ring, and behind the
+  ring itself whenever the game video is off (the ring becomes a faint outline over it, using the same opacity sliders as
+  the video overlay). It has no effect while the game video is playing inside the ring.
+
 **Optional Wi-Fi web page**
 - The bridge also serves `ipad.html` on port 8765 (address printed in `MaiTouchBridge\url.txt`). It has the touch ring only, no video.
   Safari may try to upgrade the address to HTTPS and fail; the USB app avoids that problem entirely. Allow the Windows Firewall prompt
@@ -109,7 +122,7 @@ Tap **SETTINGS** in the app. Turn on the latency readout and adjust the game's a
 `--port 8765 --p1 COM5 --p2 COM6 --usb-port 24870 --token xxx --any-window --no-keys --no-usb` (`--no-usb` turns the USB link off)
 
 **Not done yet / ideas**
-- Streaming audio to the iPad, streaming the top screen, 2P support
+- Streaming audio to the iPad, 2P support, adaptive video quality, a latency flash-test tool, a sensor calibration screen
 
 ## Repository layout
 
@@ -128,5 +141,7 @@ Touch panel side (game <-> bridge, 9600 baud): the game sends 6-byte `{....}` co
 and, after `{STAT}`, streams 9-byte frames `(` + 7 bytes + `)` holding 34 sensor bits (5 per byte, order A1-A8, B1-B8, C1-C2, D1-D8, E1-E8).
 
 App <-> bridge (TCP 24870 over usbmuxd). App to PC, text lines: `S` + 34 bits, `B` + 5 bits (select, test, service, coin, card),
-`V<size>,<quality>` (`V0` = off), `P<id>` ping. PC to app: `[uint32 LE length][bytes]`; a length with the top bit set carries a short
-text message (`O<id>` ping answer, `T<ms>,<fps>` capture timing), otherwise the bytes are a JPEG.
+`V<size>,<quality>[,<topWidth>,<topQuality>]` (`V0` = off; the top-strip fields are optional), `P<id>` ping.
+PC to app: `[uint32 LE length][bytes]`. Of the length word's top two bits: bit31 set = a short text control message
+(`O<id>` ping answer, `T<ms>,<fps>` capture timing); bit30 set (bit31 clear) = a top-screen-strip JPEG; neither set = the main
+circle-picture JPEG.

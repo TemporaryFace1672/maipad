@@ -7,6 +7,7 @@ final class PadView: UIView {
     var onButtons: ((String) -> Void)?
     var onVideoToggle: ((Bool) -> Void)?
     var onVideoSettingsChanged: (() -> Void)?
+    var onPickBackground: (() -> Void)?
 
     private let settings = Settings.shared
     private let click = ClickPlayer()
@@ -32,6 +33,19 @@ final class PadView: UIView {
     private let frameLock = NSLock()
     private var frameScheduled = false
     private var panel: SettingsPanel?
+
+    // portrait top-screen strip
+    private let topLayer = CALayer()
+    private var topFrame = CGRect.zero
+    private var gotTopFrame = false
+    private var pendingTop: CGImage?
+    private let topLock = NSLock()
+    private var topScheduled = false
+    private var topStripAspect: CGFloat = 0.78   // height/width; starts as a guess, corrected once a real frame arrives
+
+    // custom background
+    private let backgroundLayer = CALayer()
+    private var backgroundImage: UIImage?
 
     private var active = Set<UITouch>()
     private var sensorOn = [Bool](repeating: false, count: 34)
@@ -63,10 +77,19 @@ final class PadView: UIView {
         isExclusiveTouch = true
         videoOn = settings.videoOn
 
+        backgroundLayer.contentsGravity = .resizeAspectFill
+        backgroundLayer.masksToBounds = true
+        layer.addSublayer(backgroundLayer)
+
         backdrop.fillColor = UIColor(red: 0.06, green: 0.07, blue: 0.13, alpha: 1).cgColor
         backdrop.strokeColor = lineColor.cgColor
         backdrop.lineWidth = 2
         layer.addSublayer(backdrop)
+
+        topLayer.contentsGravity = .resizeAspectFill
+        topLayer.masksToBounds = true
+        topLayer.isHidden = true
+        layer.addSublayer(topLayer)
 
         videoLayer.contentsGravity = .resize
         videoLayer.masksToBounds = true
@@ -100,6 +123,7 @@ final class PadView: UIView {
         statusLabel.isUserInteractionEnabled = false
         addSubview(statusLabel)
         setConnected(false)
+        loadBackgroundImage()   // safe now that sensorLayers (used by render(), inside this call) exists
     }
 
     private func makeButtonLabel(_ text: String) -> UILabel {
@@ -125,10 +149,17 @@ final class PadView: UIView {
 
     func setConnected(_ c: Bool) {
         connected = c
-        if !c && gotFrame {
-            gotFrame = false
-            videoLayer.isHidden = true
-            render()
+        if !c {
+            if gotFrame {
+                gotFrame = false
+                videoLayer.isHidden = true
+                render()
+            }
+            if gotTopFrame {
+                gotTopFrame = false
+                topLayer.isHidden = true
+                setNeedsLayout()
+            }
         }
         updateStatusText()
     }
@@ -136,6 +167,57 @@ final class PadView: UIView {
     func showStats(_ s: LinkStats) {
         lastStats = s
         updateStatusText()
+    }
+
+    // MARK: background photo
+
+    private func loadBackgroundImage() {
+        backgroundImage = settings.customBackgroundOn ? UIImage(contentsOfFile: Settings.backgroundURL.path) : nil
+        backgroundLayer.contents = backgroundImage?.cgImage
+        render()
+    }
+
+    /// Called after the user picks (or removes) a photo in Settings, or toggles the feature.
+    func backgroundSettingChanged() {
+        loadBackgroundImage()
+        applySettingsLayout()
+        panel?.updateBackgroundStatus()
+    }
+
+    // MARK: top-screen strip (portrait)
+
+    /// Called from a background queue with each decoded top-strip frame; only the newest one is drawn.
+    func showTopFrame(_ img: CGImage) {
+        topLock.lock()
+        pendingTop = img
+        let schedule = !topScheduled
+        topScheduled = true
+        topLock.unlock()
+        if !schedule { return }
+        DispatchQueue.main.async {
+            self.topLock.lock()
+            let f = self.pendingTop
+            self.pendingTop = nil
+            self.topScheduled = false
+            self.topLock.unlock()
+            guard let frame = f else { return }
+            CATransaction.begin()
+            CATransaction.setDisableActions(true)
+            self.topLayer.contents = frame
+            self.topLayer.isHidden = false
+            CATransaction.commit()
+            let aspect = frame.width > 0 ? CGFloat(frame.height) / CGFloat(frame.width) : self.topStripAspect
+            if !self.gotTopFrame || abs(aspect - self.topStripAspect) > 0.02 {
+                self.gotTopFrame = true
+                self.topStripAspect = aspect
+                self.setNeedsLayout()
+            }
+        }
+    }
+
+    private func applySettingsLayout() {
+        setNeedsLayout()
+        layoutIfNeeded()
     }
 
     private func updateStatusText() {
@@ -198,16 +280,22 @@ final class PadView: UIView {
             gotFrame = false
             videoLayer.isHidden = true
             videoLayer.contents = nil
+            gotTopFrame = false
+            topLayer.isHidden = true
+            topLayer.contents = nil
         }
         updateToggleLabel()
         render()
         updateStatusText()
+        setNeedsLayout()
         onVideoToggle?(on)
     }
 
     // MARK: colours
 
-    private var overlay: Bool { return videoOn && gotFrame }
+    // The ring becomes a see-through overlay whenever there is a picture behind it to show: the live game video,
+    // or (with video off) a chosen background photo.
+    private var overlay: Bool { return (videoOn && gotFrame) || (settings.customBackgroundOn && backgroundImage != nil) }
 
     private func fillColor(index: Int, on: Bool) -> UIColor {
         let outer = index < 8
@@ -221,6 +309,7 @@ final class PadView: UIView {
         let stroke = lineColor.withAlphaComponent(overlay ? CGFloat(settings.outlineOpacity) : 1).cgColor
         CATransaction.begin()
         CATransaction.setDisableActions(true)
+        backdrop.fillColor = overlay ? UIColor.clear.cgColor : UIColor(red: 0.06, green: 0.07, blue: 0.13, alpha: 1).cgColor
         for i in 0..<34 {
             sensorLayers[i].fillColor = fillColor(index: i, on: sensorOn[i]).cgColor
             sensorLayers[i].strokeColor = stroke
@@ -248,10 +337,18 @@ final class PadView: UIView {
         p.onChanged = { [weak self] in self?.applySettings() }
         p.onVideoParamsCommitted = { [weak self] in self?.onVideoSettingsChanged?() }
         p.onVideoSwitch = { [weak self] on in self?.setVideoOn(on) }
+        p.onTopStripSwitch = { [weak self] _ in self?.applySettingsLayout(); self?.onVideoSettingsChanged?() }
+        p.onBackgroundSwitch = { [weak self] _ in self?.backgroundSettingChanged() }
+        p.onPickBackground = { [weak self] in self?.onPickBackground?() }
+        p.onRemoveBackground = { [weak self] in
+            try? FileManager.default.removeItem(at: Settings.backgroundURL)
+            self?.backgroundSettingChanged()
+        }
         p.onReset = { [weak self] in
             Settings.shared.reset()
             self?.videoOn = Settings.shared.videoOn
             self?.updateToggleLabel()
+            self?.loadBackgroundImage()
             self?.applySettings()
             self?.onVideoSettingsChanged?()
             self?.onVideoToggle?(Settings.shared.videoOn)
@@ -272,10 +369,36 @@ final class PadView: UIView {
 
     override func layoutSubviews() {
         super.layoutSubviews()
+        CATransaction.begin()
+        CATransaction.setDisableActions(true)
+        backgroundLayer.frame = bounds
+        CATransaction.commit()
+
         let safe = bounds.inset(by: safeAreaInsets)
-        // game picture / sensor ring: as large as fits, centred; small buttons live in the top corners
-        let size = (min(safe.width, safe.height) - 8) * CGFloat(settings.ringScale)
-        let ring = CGRect(x: safe.midX - size / 2, y: safe.midY - size / 2, width: size, height: size)
+        let portrait = safe.height > safe.width
+        let showStrip = portrait && videoOn && settings.topStripOn
+
+        // In portrait with the top strip on, it takes a slice off the top and the ring is centred in what's left;
+        // otherwise the ring/picture is as large as fits, centred, with small buttons in the corners.
+        var ring: CGRect
+        if showStrip {
+            let maxRingW = safe.width - 8
+            let stripH = maxRingW * topStripAspect
+            let available = safe.height - stripH - 16
+            let size = min(maxRingW, available) * CGFloat(settings.ringScale)
+            let top = CGRect(x: safe.minX, y: safe.minY, width: safe.width, height: stripH)
+            topFrame = top
+            ring = CGRect(x: safe.midX - size / 2, y: top.maxY + 12, width: size, height: size)
+        } else {
+            let size = (min(safe.width, safe.height) - 8) * CGFloat(settings.ringScale)
+            ring = CGRect(x: safe.midX - size / 2, y: safe.midY - size / 2, width: size, height: size)
+            topFrame = .zero
+        }
+        CATransaction.begin()
+        CATransaction.setDisableActions(true)
+        topLayer.isHidden = !showStrip || !gotTopFrame
+        topLayer.frame = topFrame
+        CATransaction.commit()
         layoutButtons(in: safe)
 
         let s = ring.width / 1440

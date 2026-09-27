@@ -256,29 +256,35 @@ namespace MaiTouchBridgeApp
         readonly NetworkStream ns;
         readonly object wlock = new object();
         volatile int size = 0, quality = 65;
+        volatile int topWidth = 0, topQuality = 50;   // "top screen" strip (the info bar above the circle); 0 = off
         volatile bool stop;
         Thread thread;
         readonly object cfgLock = new object();
 
         public Video(NetworkStream s) { ns = s; }
 
+        // "size,quality[,topWidth,topQuality]" ("size,quality" alone is the old/plain form; size=0 turns everything off).
         public void Configure(string arg)
         {
             string[] p = arg.Split(',');
-            int sz = 0, q = 65;
+            int sz = 0, q = 65, tw = 0, tq = 50;
             int.TryParse(p[0], out sz);
             if (p.Length > 1) int.TryParse(p[1], out q);
+            if (p.Length > 2) int.TryParse(p[2], out tw);
+            if (p.Length > 3) int.TryParse(p[3], out tq); else tq = q;
             if (sz != 0) sz = Math.Max(256, Math.Min(1080, sz));
             q = Math.Max(30, Math.Min(95, q));
+            if (tw != 0) tw = Math.Max(240, Math.Min(1080, tw));
+            tq = Math.Max(30, Math.Min(95, tq));
             lock (cfgLock)
             {
-                size = sz; quality = q;
+                size = sz; quality = q; topWidth = sz == 0 ? 0 : tw; topQuality = tq;
                 if (sz != 0 && thread == null)
                 {
                     thread = new Thread(Loop); thread.IsBackground = true; thread.Priority = ThreadPriority.AboveNormal; thread.Start();
                 }
             }
-            Program.Log("video " + (sz == 0 ? "off" : "on: " + sz + "x" + sz + " q" + q));
+            Program.Log("video " + (sz == 0 ? "off" : "on: " + sz + "x" + sz + " q" + q + (tw != 0 ? ", top " + tw + "w q" + tq : "")));
         }
 
         public void Stop() { stop = true; }
@@ -291,6 +297,16 @@ namespace MaiTouchBridgeApp
             BitConverter.GetBytes((uint)p.Length | 0x80000000u).CopyTo(f, 0);
             Buffer.BlockCopy(p, 0, f, 4, p.Length);
             try { lock (wlock) { ns.Write(f, 0, f.Length); } } catch { }
+        }
+
+        // Top-screen-strip JPEG frame: [uint32 length | 0x40000000][jpeg bytes] (bit30, distinct from the plain
+        // main-picture frames and from the bit31-tagged control text above).
+        void SendTop(byte[] jpg)
+        {
+            byte[] pkt = new byte[4 + jpg.Length];
+            BitConverter.GetBytes((uint)jpg.Length | 0x40000000u).CopyTo(pkt, 0);
+            Buffer.BlockCopy(jpg, 0, pkt, 4, jpg.Length);
+            lock (wlock) { ns.Write(pkt, 0, pkt.Length); }
         }
 
         // A full-size (1080x1920) game window is taller than most monitors. The picture we stream is only the bottom
@@ -343,20 +359,22 @@ namespace MaiTouchBridgeApp
             ImageCodecInfo jpeg = null;
             foreach (ImageCodecInfo c in ImageCodecInfo.GetImageEncoders()) if (c.MimeType == "image/jpeg") jpeg = c;
             IntPtr screen = GetDC(IntPtr.Zero);
-            IntPtr mem = IntPtr.Zero, bmp = IntPtr.Zero;
-            int curSize = 0, curQ = -1;
-            EncoderParameters ep = null;
+            // one screen grab per frame (the slow, vsync-bound step); the main square and the top strip are then both
+            // cut out of it with cheap in-memory StretchBlts, so asking for both costs almost nothing extra.
+            IntPtr fullMem = IntPtr.Zero, fullBmp = IntPtr.Zero; int curFullW = 0, curFullH = 0;
+            IntPtr mainMem = IntPtr.Zero, mainBmp = IntPtr.Zero; int curSize = 0, curQ = -1;
+            IntPtr topMem = IntPtr.Zero, topBmp = IntPtr.Zero; int curTopW = 0, curTopH = 0, curTopQ = -1;
+            EncoderParameters ep = null, topEp = null;
             IntPtr game = IntPtr.Zero;
             Stopwatch sw = new Stopwatch(), stat = Stopwatch.StartNew();
             int frames = 0; long bytes = 0; double capMs = 0, totMs = 0, maxMs = 0;
-            byte[] hdr = new byte[4];
             bool waiting = false;
             Stopwatch sec = Stopwatch.StartNew(); int secFrames = 0; double secTot = 0;
             try
             {
                 while (!stop)
                 {
-                    int sz = size;
+                    int sz = size, tw = topWidth, tq = topQuality;
                     if (sz == 0) { Restore(game); Thread.Sleep(50); continue; }
                     if (game == IntPtr.Zero || !IsWindowVisible(game)) game = FindGame();
                     RECT cr;
@@ -367,17 +385,27 @@ namespace MaiTouchBridgeApp
                         Thread.Sleep(200); continue;
                     }
                     waiting = false;
-                    int side = cr.R - cr.L;
+                    int side = cr.R - cr.L, fullH = cr.B - cr.T, topH = fullH - side;
                     POINT org = new POINT(); ClientToScreen(game, ref org);
-                    if (SlideUp(game, org.Y, side, cr.B - cr.T)) { Thread.Sleep(400); continue; }   // give the game a moment to follow the new size, then re-measure
+                    if (SlideUp(game, org.Y, side, fullH)) { Thread.Sleep(400); continue; }   // give the game a moment to follow the new size, then re-measure
                     if (sz > side) sz = side;    // never upscale
+                    if (tw == 0 || topH <= 0) tw = 0;
+
+                    if (side != curFullW || fullH != curFullH)
+                    {
+                        if (fullBmp != IntPtr.Zero) { SelectObject(fullMem, IntPtr.Zero); DeleteObject(fullBmp); }
+                        if (fullMem == IntPtr.Zero) fullMem = CreateCompatibleDC(screen);
+                        fullBmp = CreateCompatibleBitmap(screen, side, fullH);
+                        SelectObject(fullMem, fullBmp);
+                        curFullW = side; curFullH = fullH;
+                    }
                     if (sz != curSize)
                     {
-                        if (bmp != IntPtr.Zero) { SelectObject(mem, IntPtr.Zero); DeleteObject(bmp); }
-                        if (mem == IntPtr.Zero) mem = CreateCompatibleDC(screen);
-                        bmp = CreateCompatibleBitmap(screen, sz, sz);
-                        SelectObject(mem, bmp);
-                        SetStretchBltMode(mem, 4);   // HALFTONE: smooth downscale
+                        if (mainBmp != IntPtr.Zero) { SelectObject(mainMem, IntPtr.Zero); DeleteObject(mainBmp); }
+                        if (mainMem == IntPtr.Zero) mainMem = CreateCompatibleDC(screen);
+                        mainBmp = CreateCompatibleBitmap(screen, sz, sz);
+                        SelectObject(mainMem, mainBmp);
+                        SetStretchBltMode(mainMem, 4);   // HALFTONE: smooth downscale
                         curSize = sz;
                     }
                     if (quality != curQ)
@@ -386,11 +414,29 @@ namespace MaiTouchBridgeApp
                         ep = new EncoderParameters(1);
                         ep.Param[0] = new EncoderParameter(System.Drawing.Imaging.Encoder.Quality, (long)curQ);
                     }
+                    int th = tw == 0 ? 0 : Math.Max(1, (int)Math.Round(tw * (double)topH / side));
+                    if (tw != 0 && (tw != curTopW || th != curTopH))
+                    {
+                        if (topBmp != IntPtr.Zero) { SelectObject(topMem, IntPtr.Zero); DeleteObject(topBmp); }
+                        if (topMem == IntPtr.Zero) topMem = CreateCompatibleDC(screen);
+                        topBmp = CreateCompatibleBitmap(screen, tw, th);
+                        SelectObject(topMem, topBmp);
+                        SetStretchBltMode(topMem, 4);
+                        curTopW = tw; curTopH = th;
+                    }
+                    if (tw != 0 && tq != curTopQ)
+                    {
+                        curTopQ = tq;
+                        topEp = new EncoderParameters(1);
+                        topEp.Param[0] = new EncoderParameter(System.Drawing.Imaging.Encoder.Quality, (long)curTopQ);
+                    }
+
                     sw.Restart();
-                    StretchBlt(mem, 0, 0, sz, sz, screen, org.X, org.Y + (cr.B - cr.T) - side, side, side, 0x00CC0020);
+                    StretchBlt(fullMem, 0, 0, side, fullH, screen, org.X, org.Y, side, fullH, 0x00CC0020);
                     double cap = sw.Elapsed.TotalMilliseconds;
+                    StretchBlt(mainMem, 0, 0, sz, sz, fullMem, 0, topH, side, side, 0x00CC0020);
                     byte[] jpg;
-                    using (Bitmap b = Image.FromHbitmap(bmp))
+                    using (Bitmap b = Image.FromHbitmap(mainBmp))
                     using (MemoryStream ms = new MemoryStream(96 * 1024))
                     {
                         b.Save(ms, jpeg, ep);
@@ -400,6 +446,18 @@ namespace MaiTouchBridgeApp
                     BitConverter.GetBytes(jpg.Length).CopyTo(pkt, 0);
                     Buffer.BlockCopy(jpg, 0, pkt, 4, jpg.Length);
                     lock (wlock) { ns.Write(pkt, 0, pkt.Length); }
+                    if (tw != 0)
+                    {
+                        StretchBlt(topMem, 0, 0, tw, th, fullMem, 0, 0, side, topH, 0x00CC0020);
+                        byte[] tjpg;
+                        using (Bitmap b = Image.FromHbitmap(topBmp))
+                        using (MemoryStream ms = new MemoryStream(48 * 1024))
+                        {
+                            b.Save(ms, jpeg, topEp);
+                            tjpg = ms.ToArray();
+                        }
+                        SendTop(tjpg);
+                    }
                     double tot = sw.Elapsed.TotalMilliseconds;
                     frames++; bytes += jpg.Length; capMs += cap; totMs += tot; if (tot > maxMs) maxMs = tot;
                     secFrames++; secTot += tot;
@@ -421,8 +479,12 @@ namespace MaiTouchBridgeApp
             finally
             {
                 Restore(game);
-                if (bmp != IntPtr.Zero) { SelectObject(mem, IntPtr.Zero); DeleteObject(bmp); }
-                if (mem != IntPtr.Zero) DeleteDC(mem);
+                if (mainBmp != IntPtr.Zero) { SelectObject(mainMem, IntPtr.Zero); DeleteObject(mainBmp); }
+                if (mainMem != IntPtr.Zero) DeleteDC(mainMem);
+                if (topBmp != IntPtr.Zero) { SelectObject(topMem, IntPtr.Zero); DeleteObject(topBmp); }
+                if (topMem != IntPtr.Zero) DeleteDC(topMem);
+                if (fullBmp != IntPtr.Zero) { SelectObject(fullMem, IntPtr.Zero); DeleteObject(fullBmp); }
+                if (fullMem != IntPtr.Zero) DeleteDC(fullMem);
                 ReleaseDC(IntPtr.Zero, screen);
             }
         }
