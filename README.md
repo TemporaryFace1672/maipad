@@ -12,6 +12,7 @@ picture streamed back onto the iPad so it feels like a small cabinet.
 > Not affiliated with SEGA. No game files, keychips or keys are included or needed from this repo. You must supply your own. Refrain from asking for game data in discussions
 > legally obtained game setup. This project only emulates the *input device*.
 
+created with the help of Claude
 ## How it works
 
 ```
