@@ -1,0 +1,16 @@
+maimai iPad controller (MaiTouchBridge)
+======================================
+Launch:  D:\maimai DX MAGiCAL Omnimix (SDEZ 1.70.00)\Package\start_ipad.bat
+  - starts MaiTouchBridge (touch panel on COM5), then the game. Do NOT run MaiDXR at the same time.
+  - the iPad address is printed in the launcher window and saved in url.txt
+    (http://<PC-IP>:8765/?k=<token>; token is in token.txt).
+
+iPad: Safari -> open the address -> Share -> "Add to Home Screen" for full screen (optional).
+  Turn off iPad multitasking gestures (Settings > Home Screen & Multitasking) if 4/5-finger swipes interfere.
+  PC and iPad must be on the same Wi-Fi. First run: allow MaiTouchBridge in the Windows Firewall
+  prompt (Private networks). Use the first address in url.txt (the 172.16.x one is the VPN/WARP adapter).
+
+Page: ring of 34 touch sensors (multi-touch), buttons SELECT (3), COIN (F3), CARD (Enter = Aime scan),
+  TEST (7), SERVICE (9). Outer blue segments A1-A8 are the 8 ring buttons (keys W E D C X Z A Q).
+Keys are only pressed while the game window ("Sinmai") is in front. Everything is released when the iPad disconnects.
+Log: MaiTouchBridge.log   Options: --port 8765 --p1 COM5 --p2 COM6 --token xxx --any-window --no-keys

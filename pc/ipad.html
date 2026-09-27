@@ -1,0 +1,152 @@
+<!DOCTYPE html>
+<html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no,viewport-fit=cover">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black">
+<meta name="apple-mobile-web-app-title" content="maimai">
+<meta name="mobile-web-app-capable" content="yes">
+<title>maimai pad</title>
+<style>
+:root{--bg:#0b0d14;--fg:#e7e9f3;--dim:#7a8099;--acc:#4de1ff;--on:#ff5fa8;--panel:#171b29}
+*{box-sizing:border-box;-webkit-user-select:none;user-select:none;-webkit-touch-callout:none;-webkit-tap-highlight-color:transparent}
+html,body{margin:0;height:100%;background:var(--bg);color:var(--fg);font-family:-apple-system,system-ui,Segoe UI,sans-serif;overflow:hidden;overscroll-behavior:none;touch-action:none}
+#app{position:fixed;inset:0;display:flex;flex-direction:row;align-items:center;justify-content:center;gap:2vmin;padding:env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left)}
+@media (orientation:portrait){#app{flex-direction:column}}
+#ring{flex:0 0 auto;width:min(96vw,96vh);height:min(96vw,96vh);touch-action:none}
+@media (orientation:landscape){#ring{width:min(96vh,66vw);height:min(96vh,66vw)}}
+@media (orientation:portrait){#ring{width:min(98vw,70vh);height:min(98vw,70vh)}}
+svg{width:100%;height:100%;display:block;touch-action:none}
+.s{fill:#1b2033;stroke:#3a4266;stroke-width:5;stroke-linejoin:round}
+.s.A{fill:#1f2947}.s.C{fill:#2a2f4d}
+.s.on{fill:var(--on);stroke:#ffd0e6}
+.s.A.on{fill:#ffb03a;stroke:#fff1cf}
+#btns{display:flex;gap:1.6vmin;touch-action:none}
+@media (orientation:landscape){#btns{flex-direction:column;width:22vw;max-width:220px}}
+@media (orientation:portrait){#btns{flex-direction:row;width:96vw;flex-wrap:wrap;justify-content:center}}
+.b{flex:1 1 0;min-height:11vmin;min-width:16vmin;display:flex;align-items:center;justify-content:center;background:var(--panel);border:2px solid #333b5c;border-radius:14px;font-size:max(3.2vmin,15px);font-weight:600;letter-spacing:.03em;touch-action:none}
+.b.on{background:var(--acc);color:#04222b;border-color:#fff}
+.b small{display:block;font-weight:400;font-size:.7em;color:var(--dim)}
+.b.on small{color:#04222b}
+#sel{min-height:16vmin}
+#st{position:fixed;left:8px;top:calc(env(safe-area-inset-top) + 4px);font-size:12px;color:var(--dim);pointer-events:none}
+#st.ok{color:#5be08a}#st.bad{color:#ff6b6b}
+#veil{position:fixed;inset:0;background:rgba(5,6,10,.78);display:none;align-items:center;justify-content:center;text-align:center;font-size:20px;line-height:1.5;z-index:9}
+#veil.show{display:flex}
+</style></head><body>
+<div id="app">
+<div id="ring"><svg viewBox="0 0 1440 1440" id="svg">
+<circle cx="720" cy="720" r="715" fill="#0f1220" stroke="#2a3050" stroke-width="6"/>
+<polygon data-i="0" class="s A" points="936,39 1031,76 1146,144 994,349 931,349 835,308 786,260 821,11"/>
+<polygon data-i="1" class="s A" points="1352,393 1394,487 1430,619 1182,654 1133,606 1091,511 1091,442 1293,292"/>
+<polygon data-i="2" class="s A" points="1397,936 1361,1032 1293,1150 1092,999 1092,930 1133,834 1181,786 1429,820"/>
+<polygon data-i="3" class="s A" points="1046,1351 953,1393 823,1427 786,1175 834,1127 930,1092 998,1092 1150,1292"/>
+<polygon data-i="4" class="s A" points="395,1351 488,1393 618,1427 654,1175 607,1127 511,1092 443,1092 291,1293"/>
+<polygon data-i="5" class="s A" points="48,935 84,1031 149,1150 349,999 349,929 312,833 264,785 16,820"/>
+<polygon data-i="6" class="s A" points="94,392 52,486 16,618 264,653 313,605 349,510 349,442 148,291"/>
+<polygon data-i="7" class="s A" points="505,39 410,76 295,149 448,349 510,349 606,308 654,260 619,11"/>
+<polygon data-i="8" class="s B" points="720,424 798,346 929,401 929,511 900,541 790,541 720,476"/>
+<polygon data-i="9" class="s B" points="1017,720 1095,643 1040,511 930,511 900,541 900,650 965,720"/>
+<polygon data-i="10" class="s B" points="1020,721 1098,799 1040,929 930,929 900,901 900,792 965,721"/>
+<polygon data-i="11" class="s B" points="721,1013 808,1099 929,1041 929,930 898,901 792,901 721,966"/>
+<polygon data-i="12" class="s B" points="720,1013 633,1099 512,1041 512,930 543,901 649,901 720,966"/>
+<polygon data-i="13" class="s B" points="427,721 349,799 407,929 512,929 542,901 542,792 482,721"/>
+<polygon data-i="14" class="s B" points="427,720 345,638 400,511 510,511 540,541 540,650 482,720"/>
+<polygon data-i="15" class="s B" points="720,424 642,346 511,401 511,511 540,541 650,541 720,476"/>
+<polygon data-i="16" class="s C" points="720,583 780,583 860,663 860,783 780,863 720,863 720,583"/>
+<polygon data-i="17" class="s C" points="720,863 660,863 579,782 580,664 660,583 720,583 720,863"/>
+<polygon data-i="18" class="s D" points="620,11 670,8 720,6 770,8 820,11 785,259 720,194 655,259"/>
+<polygon data-i="19" class="s D" points="1148,144 1182,176 1220,211 1254,248 1290,291 1091,441 1091,349 995,349"/>
+<polygon data-i="20" class="s D" points="1430,620 1433,668 1435,720 1433,770 1429,819 1182,785 1247,720 1182,655"/>
+<polygon data-i="21" class="s D" points="1292,1151 1260,1187 1225,1225 1188,1259 1151,1291 1000,1092 1092,1092 1092,1000"/>
+<polygon data-i="22" class="s D" points="820,1427 772,1430 720,1432 670,1430 621,1427 655,1175 720,1240 785,1175"/>
+<polygon data-i="23" class="s D" points="290,1292 254,1260 216,1225 182,1188 150,1151 349,1000 349,1092 441,1092"/>
+<polygon data-i="24" class="s D" points="15,819 12,771 10,719 12,669 16,620 263,654 198,719 263,784"/>
+<polygon data-i="25" class="s D" points="149,290 181,254 216,216 253,182 294,150 447,349 349,349 349,441"/>
+<polygon data-i="26" class="s E" points="607,308 720,195 833,308 720,421"/>
+<polygon data-i="27" class="s E" points="930,350 930,510 1090,510 1090,350 930,350"/>
+<polygon data-i="28" class="s E" points="1020,720 1133,607 1246,720 1133,833"/>
+<polygon data-i="29" class="s E" points="930,930 930,1090 1090,1090 1090,930 930,930"/>
+<polygon data-i="30" class="s E" points="607,1126 720,1013 833,1126 720,1239"/>
+<polygon data-i="31" class="s E" points="350,930 350,1090 510,1090 510,930 350,930"/>
+<polygon data-i="32" class="s E" points="200,720 313,607 426,720 313,833"/>
+<polygon data-i="33" class="s E" points="350,350 350,510 510,510 510,350 350,350"/>
+</svg></div>
+<div id="btns">
+<div class="b" id="sel" data-b="0">SELECT<small>&nbsp;3</small></div>
+<div class="b" data-b="3">COIN</div>
+<div class="b" data-b="4">CARD<small>Aime</small></div>
+<div class="b" data-b="1">TEST</div>
+<div class="b" data-b="2">SERVICE</div>
+</div></div>
+<div id="st">connecting...</div>
+<div id="veil"><div>Disconnected<br><small>reconnecting to the PC...</small></div></div>
+<script>
+(function(){
+var N=34, ws=null, state=new Array(N).fill(0), btn=[0,0,0,0,0], last='', lastB='';
+var polys=document.querySelectorAll('.s'), stEl=document.getElementById('st'), veil=document.getElementById('veil');
+var ptrs={}, bptrs={}; // pointerId -> sensor set / button index
+var rtt=0, pingT=0;
+function send(m){ if(ws&&ws.readyState===1) ws.send(m); }
+function pushSensors(){
+  var s=''; for(var i=0;i<N;i++) s+=state[i]?'1':'0';
+  if(s!==last){ last=s; send('S'+s); }
+  for(var i=0;i<N;i++) polys[i].classList.toggle('on',!!state[i]);
+}
+function pushButtons(){
+  var s=''; for(var i=0;i<5;i++) s+=btn[i]?'1':'0';
+  if(s!==lastB){ lastB=s; send('B'+s); }
+  document.querySelectorAll('.b').forEach(function(e){ e.classList.toggle('on',!!btn[+e.dataset.b]); });
+}
+function recompute(){
+  state.fill(0);
+  for(var id in ptrs){ var v=ptrs[id]; if(v>=0) state[v]=1; }
+  pushSensors();
+}
+function hit(x,y){
+  var e=document.elementFromPoint(x,y);
+  if(e && e.dataset && e.dataset.i!==undefined){
+    // C1/C2 overlap each other's rim; fine. Outer sensors win over nothing, so return element index.
+    return +e.dataset.i;
+  }
+  return -1;
+}
+function onRing(ev){
+  ev.preventDefault();
+  if(ev.type==='pointerdown'){ ptrs[ev.pointerId]=hit(ev.clientX,ev.clientY); }
+  else if(ev.type==='pointermove'){ if(!(ev.pointerId in ptrs)) return; ptrs[ev.pointerId]=hit(ev.clientX,ev.clientY); }
+  else { delete ptrs[ev.pointerId]; }
+  recompute();
+}
+var ring=document.getElementById('ring');
+['pointerdown','pointermove','pointerup','pointercancel'].forEach(function(t){ ring.addEventListener(t,onRing,{passive:false}); });
+// buttons
+function onBtn(ev){
+  ev.preventDefault();
+  var el=ev.target.closest('.b'); 
+  if(ev.type==='pointerdown'){ if(!el) return; bptrs[ev.pointerId]=+el.dataset.b; try{el.setPointerCapture(ev.pointerId);}catch(e){} }
+  else if(ev.type==='pointerup'||ev.type==='pointercancel'){ delete bptrs[ev.pointerId]; }
+  else return;
+  btn=[0,0,0,0,0]; for(var id in bptrs) btn[bptrs[id]]=1;
+  pushButtons();
+}
+['pointerdown','pointerup','pointercancel'].forEach(function(t){ document.getElementById('btns').addEventListener(t,onBtn,{passive:false}); });
+function releaseAll(){ ptrs={}; bptrs={}; btn=[0,0,0,0,0]; recompute(); pushButtons(); }
+document.addEventListener('visibilitychange',function(){ if(document.hidden) releaseAll(); });
+window.addEventListener('blur',releaseAll);
+['contextmenu','gesturestart','gesturechange','dragstart','selectstart'].forEach(function(t){ document.addEventListener(t,function(e){e.preventDefault();}); });
+document.addEventListener('touchmove',function(e){e.preventDefault();},{passive:false});
+function connect(){
+  var proto=location.protocol==='https:'?'wss://':'ws://';
+  ws=new WebSocket(proto+location.host+'/ws'+location.search);
+  ws.onopen=function(){ veil.classList.remove('show'); stEl.textContent='connected'; stEl.className='ok'; last=''; lastB=''; pushSensors(); pushButtons(); };
+  ws.onmessage=function(e){
+    var m=e.data;
+    if(m[0]==='O'){ rtt=Math.round(performance.now()-pingT); stEl.textContent='connected  '+rtt+' ms'; }
+  };
+  ws.onclose=function(){ stEl.textContent='disconnected'; stEl.className='bad'; veil.classList.add('show'); setTimeout(connect,700); };
+  ws.onerror=function(){ try{ws.close();}catch(e){} };
+}
+setInterval(function(){ if(ws&&ws.readyState===1){ pingT=performance.now(); send('P'+Date.now()); } },1500);
+connect();
+})();
+</script></body></html>
