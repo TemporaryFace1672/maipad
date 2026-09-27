@@ -9,8 +9,8 @@ import ImageIO
 /// PC -> app: video frames, each [UInt32 little-endian length][JPEG bytes].
 final class PadServer {
     static let port: UInt16 = 24870
-    static let videoSize = 800
-    static let videoQuality = 65
+    static let videoSize = 1080
+    static let videoQuality = 75
 
     var onStatus: ((Bool) -> Void)?
     var onFrame: ((CGImage) -> Void)?   // called on a background queue

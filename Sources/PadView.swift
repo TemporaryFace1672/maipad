@@ -65,10 +65,10 @@ final class PadView: UIView {
         videoLayer.isHidden = true
         layer.addSublayer(videoLayer)
 
-        toggleLabel.font = UIFont.systemFont(ofSize: 13, weight: .semibold)
+        toggleLabel.font = UIFont.systemFont(ofSize: 14, weight: .semibold)
         toggleLabel.textAlignment = .center
-        toggleLabel.layer.cornerRadius = 8
-        toggleLabel.layer.borderWidth = 1
+        toggleLabel.layer.cornerRadius = 10
+        toggleLabel.layer.borderWidth = 2
         toggleLabel.clipsToBounds = true
         toggleLabel.isUserInteractionEnabled = false
         addSubview(toggleLabel)
@@ -89,9 +89,9 @@ final class PadView: UIView {
             l.text = buttonTitles[i]
             l.textAlignment = .center
             l.textColor = .white
-            l.font = UIFont.systemFont(ofSize: 20, weight: .semibold)
+            l.font = UIFont.systemFont(ofSize: 14, weight: .semibold)
             l.backgroundColor = UIColor(red: 0.09, green: 0.11, blue: 0.16, alpha: 1)
-            l.layer.cornerRadius = 14
+            l.layer.cornerRadius = 10
             l.layer.borderWidth = 2
             l.layer.borderColor = UIColor(red: 0.2, green: 0.23, blue: 0.36, alpha: 1).cgColor
             l.clipsToBounds = true
@@ -120,7 +120,7 @@ final class PadView: UIView {
     private func fillColor(index: Int, on: Bool) -> UIColor {
         let outer = index < 8
         let overlay = videoOn && gotFrame   // sensors turn into a see-through overlay above the game picture
-        if on { return (outer ? onOuter : onColor).withAlphaComponent(overlay ? 0.45 : 1) }
+        if on { return (outer ? onOuter : onColor).withAlphaComponent(overlay ? 0.10 : 1) }
         if overlay { return UIColor.clear }
         return outer ? offOuter : offColor
     }
@@ -176,23 +176,10 @@ final class PadView: UIView {
     override func layoutSubviews() {
         super.layoutSubviews()
         let safe = bounds.inset(by: safeAreaInsets)
-        let gap: CGFloat = 12
-        var ring = CGRect.zero
-        var btnArea = CGRect.zero
-
-        if safe.width >= safe.height {
-            let size = min(safe.height - gap, safe.width * 0.68)
-            ring = CGRect(x: safe.minX + gap / 2, y: safe.midY - size / 2, width: size, height: size)
-            let bx = ring.maxX + gap
-            btnArea = CGRect(x: bx, y: safe.minY + gap, width: max(safe.maxX - bx - gap / 2, 60), height: safe.height - gap * 2)
-            layoutButtons(in: btnArea, vertical: true)
-        } else {
-            let size = min(safe.width - gap, safe.height * 0.72)
-            ring = CGRect(x: safe.midX - size / 2, y: safe.minY + gap / 2, width: size, height: size)
-            let by = ring.maxY + gap
-            btnArea = CGRect(x: safe.minX + gap, y: by, width: safe.width - gap * 2, height: max(safe.maxY - by - gap / 2, 60))
-            layoutButtons(in: btnArea, vertical: false)
-        }
+        // game picture / sensor ring: as large as fits, centred; small buttons live in the top corners
+        let size = min(safe.width, safe.height) - 8
+        let ring = CGRect(x: safe.midX - size / 2, y: safe.midY - size / 2, width: size, height: size)
+        layoutButtons(in: safe)
 
         let s = ring.width / 1440
         sensorPaths.removeAll()
@@ -217,27 +204,25 @@ final class PadView: UIView {
         CATransaction.commit()
 
         statusLabel.sizeToFit()
-        statusLabel.frame.origin = CGPoint(x: safe.minX + 10, y: safe.minY + 4)
-        toggleLabel.frame = CGRect(x: statusLabel.frame.maxX + 12, y: safe.minY + 2, width: 92, height: 28)
-        toggleFrame = toggleLabel.frame.insetBy(dx: -10, dy: -10)
+        statusLabel.frame.origin = CGPoint(x: safe.minX + 10, y: safe.maxY - statusLabel.frame.height - 4)
     }
 
-    private func layoutButtons(in area: CGRect, vertical: Bool) {
-        let gap: CGFloat = 10
-        let n = CGFloat(buttonOrderOnScreen.count)
-        for (slot, idx) in buttonOrderOnScreen.enumerated() {
-            let f: CGRect
-            let sl = CGFloat(slot)
-            if vertical {
-                let h = (area.height - gap * (n - 1)) / n
-                f = CGRect(x: area.minX, y: area.minY + sl * (h + gap), width: area.width, height: h)
-            } else {
-                let w = (area.width - gap * (n - 1)) / n
-                f = CGRect(x: area.minX + sl * (w + gap), y: area.minY, width: w, height: min(area.height, 110))
-            }
+    private func layoutButtons(in safe: CGRect) {
+        let w: CGFloat = 96, h: CGFloat = 42, gap: CGFloat = 8, margin: CGFloat = 10
+        let left = [0, 3, 4]     // select, coin, card
+        let right = [1, 2]       // test, service (+ the video toggle below them)
+        for (slot, idx) in left.enumerated() {
+            let f = CGRect(x: safe.minX + margin, y: safe.minY + margin + CGFloat(slot) * (h + gap), width: w, height: h)
             buttonFrames[idx] = f
             buttonViews[idx].frame = f
         }
+        for (slot, idx) in right.enumerated() {
+            let f = CGRect(x: safe.maxX - margin - w, y: safe.minY + margin + CGFloat(slot) * (h + gap), width: w, height: h)
+            buttonFrames[idx] = f
+            buttonViews[idx].frame = f
+        }
+        toggleLabel.frame = CGRect(x: safe.maxX - margin - w, y: safe.minY + margin + CGFloat(right.count) * (h + gap), width: w, height: h)
+        toggleFrame = toggleLabel.frame.insetBy(dx: -4, dy: -4)
     }
 
     // MARK: touch
@@ -302,8 +287,10 @@ final class PadView: UIView {
     private func render() {
         CATransaction.begin()
         CATransaction.setDisableActions(true)
+        let stroke = lineColor.withAlphaComponent(videoOn && gotFrame ? 0.4 : 1).cgColor
         for i in 0..<34 {
             sensorLayers[i].fillColor = fillColor(index: i, on: sensorOn[i]).cgColor
+            sensorLayers[i].strokeColor = stroke
         }
         CATransaction.commit()
         for i in 0..<5 {

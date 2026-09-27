@@ -8,20 +8,11 @@ rem iPad mode: MaiTouchBridge plays the touch panel on COM5 (COM3<->COM5 com0com
 rem Do not run it together with MaiDXR (only one program can own COM5).
 powershell -NoProfile -Command "(Get-Content mai2.ini) -replace '^DummyTouchPanel=.*','DummyTouchPanel=0' -replace '^DummyLED=.*','DummyLED=1' | Set-Content mai2.ini"
 
-rem Largest exact 9:16 window that fits the usable desktop height (max 1080x1920 = native).
-set WH=
-for /f %%a in ('powershell -NoProfile -Command "Add-Type -AssemblyName System.Windows.Forms; [Windows.Forms.Screen]::PrimaryScreen.WorkingArea.Height"') do set WH=%%a
+rem Native 1080x1920 window (sharpest picture for the iPad video). It is taller than most monitors, so while the iPad
+rem is streaming, MaiTouchBridge slides the window up so the bottom (circle) square stays fully on screen, then puts it back.
 set SW=1080
 set SH=1920
-if defined WH (
-  set /a SH=WH/32*32
-  set /a SW=SH/32*18
-  if !SH! GTR 1920 (
-    set SH=1920
-    set SW=1080
-  )
-)
-echo Usable desktop height: !WH!  -^>  game window: !SW!x!SH!  (9:16)
+echo Game window: !SW!x!SH!
 
 start "MaiTouchBridge" /min "C:\Games\MaiIpad\MaiTouchBridge.exe"
 timeout /t 2 /nobreak >nul
