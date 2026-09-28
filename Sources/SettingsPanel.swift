@@ -110,7 +110,7 @@ final class SettingsPanel: UIView {
                   format: { "\(Int(($0 * 100).rounded()))%" }, commitsVideo: false) { [weak self] v in self?.s.outlineOpacity = Double(v); self?.onChanged?() }
         sliderRow("Touch glow opacity", min: 0, max: 1, step: 0.05, value: Float(s.glowOpacity),
                   format: { "\(Int(($0 * 100).rounded()))%" }, commitsVideo: false) { [weak self] v in self?.s.glowOpacity = Double(v); self?.onChanged?() }
-        sliderRow("Ring size", min: 0.7, max: 1, step: 0.02, value: Float(s.ringScale),
+        sliderRow("Ring size", min: 0.6, max: 1, step: 0.02, value: Float(s.ringScale),
                   format: { "\(Int(($0 * 100).rounded()))%" }, commitsVideo: false) { [weak self] v in self?.s.ringScale = Double(v); self?.onChanged?() }
         switchRow("Left-handed button layout", s.leftHanded) { [weak self] on in self?.s.leftHanded = on; self?.onChanged?() }
 

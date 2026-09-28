@@ -41,7 +41,7 @@ final class PadView: UIView {
     private var pendingTop: CGImage?
     private let topLock = NSLock()
     private var topScheduled = false
-    private var topStripAspect: CGFloat = 0.78   // height/width; starts as a guess, corrected once a real frame arrives
+    private var topStripAspect: CGFloat = 0.28   // height/width; starts as a guess, corrected once a real frame arrives
 
     // custom background
     private let backgroundLayer = CALayer()

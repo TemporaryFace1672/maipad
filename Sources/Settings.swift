@@ -36,8 +36,10 @@ final class Settings {
         get { return num("glowOpacity", 0.10) }
         set { d.set(newValue, forKey: "glowOpacity") }
     }
+    // 0.85 by default: an iPad isn't the cabinet's 9:16 shape, so a full-width ring looks oversized;
+    // the real screen (and reference emulators like Majdata) leave a visible margin around it.
     var ringScale: Double {
-        get { return num("ringScale", 1.0) }
+        get { return num("ringScale", 0.85) }
         set { d.set(newValue, forKey: "ringScale") }
     }
     var leftHanded: Bool {
