@@ -240,9 +240,8 @@ namespace MaiTouchBridgeApp
         [DllImport("user32.dll")] static extern IntPtr GetDC(IntPtr h);
         [DllImport("user32.dll")] static extern int ReleaseDC(IntPtr h, IntPtr dc);
         [DllImport("user32.dll")] static extern bool SetProcessDPIAware();
-        [DllImport("user32.dll")] static extern bool GetWindowRect(IntPtr h, out RECT r);
         [DllImport("user32.dll")] static extern bool SetWindowPos(IntPtr h, IntPtr after, int x, int y, int w, int hh, uint flags);
-        [DllImport("user32.dll")] static extern int GetSystemMetrics(int i);
+        [DllImport("user32.dll")] static extern bool SystemParametersInfo(uint action, uint param, ref RECT rect, uint winIni);
         [DllImport("gdi32.dll")] static extern IntPtr CreateCompatibleDC(IntPtr dc);
         [DllImport("gdi32.dll")] static extern IntPtr CreateCompatibleBitmap(IntPtr dc, int w, int h);
         [DllImport("gdi32.dll")] static extern IntPtr SelectObject(IntPtr dc, IntPtr o);
@@ -293,35 +292,35 @@ namespace MaiTouchBridgeApp
             try { lock (wlock) { ns.Write(f, 0, f.Length); } } catch { }
         }
 
-        // A full-size (1080x1920) game window is taller than most monitors. The picture we stream is only the bottom
-        // square, so while streaming we slide the window up until that square is on screen (SWP_NOSIZE|NOZORDER|NOACTIVATE).
-        // Unity clamps a new window to the monitor height, so a 1080-wide window ends up squashed; we resize it to a true
-        // 9:16 (cw x cw*16/9) from outside, which the game follows.
-        bool moved; int origX, origY, origW, origH;
-        bool SlideUp(IntPtr game, int clientTopScreenY, int cw, int ch)
+        // The window is left exactly where Unity put it - no resize, no slide (an earlier version forcibly resized and
+        // slid the window to make room for a since-abandoned feature, which visibly yanked the game around the screen).
+        // The one thing that does need a nudge: some monitors' taskbar overlaps the last ~40px of a window that reaches
+        // the physical bottom of the screen, and the (always-on-top) taskbar would then bleed into the bottom of the
+        // circle. If that's happening, shift the window up by just enough to clear it, and put it back when video stops.
+        //
+        // The overflow check is judged against the ORIGINAL, un-nudged position (cached once), not the window's current
+        // (already-corrected) position - otherwise every frame would see "no overflow" right after nudging, undo the
+        // nudge, see the overflow again next frame, redo it, forever (a permanent once-per-frame jitter).
+        bool nudged; int nudgeOrigX, nudgeOrigY;
+        void ClearTaskbar(IntPtr game, int screenX, int screenY, int height)
         {
-            int screenH = GetSystemMetrics(1);
-            int wantH = (int)((long)cw * 16 / 9);
-            bool wrongShape = Math.Abs(ch - wantH) > 3;
-            int newCh = wrongShape ? wantH : ch;
-            int squareTop = clientTopScreenY + newCh - cw;
-            bool visible = squareTop >= 0 && squareTop + cw <= screenH;
-            if (!wrongShape && visible) return false;
-            if (cw > screenH) return false;                                     // cannot fit anyway
-            RECT wr; if (!GetWindowRect(game, out wr)) return false;
-            if (!moved) { origX = wr.L; origY = wr.T; origW = wr.R - wr.L; origH = wr.B - wr.T; moved = true; }
-            int frameH = (wr.B - wr.T) - ch;
-            int y = visible ? wr.T : wr.T - squareTop;
-            SetWindowPos(game, IntPtr.Zero, wr.L, y, wr.R - wr.L, newCh + frameH, 0x0004 | 0x0010);
-            Program.Log("video: game window set to " + cw + "x" + newCh + " and moved so the circle screen is fully on the monitor");
-            return true;
+            RECT work = new RECT();
+            if (!SystemParametersInfo(0x0030 /* SPI_GETWORKAREA */, 0, ref work, 0)) return;
+            int baseY = nudged ? nudgeOrigY : screenY;
+            int overflow = (baseY + height) - work.B;
+            if (overflow <= 0) { RestoreTaskbarNudge(game); return; }
+            int targetY = baseY - overflow;
+            if (nudged && screenY == targetY) return;   // already there; nothing to do this frame
+            if (!nudged) { nudgeOrigX = screenX; nudgeOrigY = screenY; nudged = true; }
+            SetWindowPos(game, IntPtr.Zero, nudgeOrigX, targetY, 0, 0, 0x0001 | 0x0004 | 0x0010);
+            Program.Log("video: nudged the game window up " + overflow + " px to clear the taskbar");
         }
 
-        void Restore(IntPtr game)
+        void RestoreTaskbarNudge(IntPtr game)
         {
-            if (!moved) return;
-            moved = false;
-            if (game != IntPtr.Zero) { SetWindowPos(game, IntPtr.Zero, origX, origY, origW, origH, 0x0004 | 0x0010); Program.Log("video: game window put back"); }
+            if (!nudged) return;
+            nudged = false;
+            if (game != IntPtr.Zero) SetWindowPos(game, IntPtr.Zero, nudgeOrigX, nudgeOrigY, 0, 0, 0x0001 | 0x0004 | 0x0010);
         }
 
         static IntPtr FindGame()
@@ -357,7 +356,7 @@ namespace MaiTouchBridgeApp
                 while (!stop)
                 {
                     int sz = size;
-                    if (sz == 0) { Restore(game); Thread.Sleep(50); continue; }
+                    if (sz == 0) { RestoreTaskbarNudge(game); Thread.Sleep(50); continue; }
                     if (game == IntPtr.Zero || !IsWindowVisible(game)) game = FindGame();
                     RECT cr;
                     if (game == IntPtr.Zero || IsIconic(game) || !GetClientRect(game, out cr) || cr.R - cr.L < 64 || cr.B - cr.T < cr.R - cr.L)
@@ -369,7 +368,8 @@ namespace MaiTouchBridgeApp
                     waiting = false;
                     int side = cr.R - cr.L;
                     POINT org = new POINT(); ClientToScreen(game, ref org);
-                    if (SlideUp(game, org.Y, side, cr.B - cr.T)) { Thread.Sleep(400); continue; }   // give the game a moment to follow the new size, then re-measure
+                    ClearTaskbar(game, org.X, org.Y, cr.B - cr.T);
+                    ClientToScreen(game, ref org);   // ClearTaskbar may just have moved it; re-read before capturing
                     if (sz > side) sz = side;    // never upscale
                     if (sz != curSize)
                     {
@@ -420,7 +420,7 @@ namespace MaiTouchBridgeApp
             catch (Exception e) { Program.Log("video stopped: " + e.Message); }
             finally
             {
-                Restore(game);
+                RestoreTaskbarNudge(game);
                 if (bmp != IntPtr.Zero) { SelectObject(mem, IntPtr.Zero); DeleteObject(bmp); }
                 if (mem != IntPtr.Zero) DeleteDC(mem);
                 ReleaseDC(IntPtr.Zero, screen);
