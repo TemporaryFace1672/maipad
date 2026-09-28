@@ -36,10 +36,10 @@ final class Settings {
         get { return num("glowOpacity", 0.10) }
         set { d.set(newValue, forKey: "glowOpacity") }
     }
-    // 0.85 by default: an iPad isn't the cabinet's 9:16 shape, so a full-width ring looks oversized;
-    // the real screen (and reference emulators like Majdata) leave a visible margin around it.
+    // An iPad isn't the cabinet's 9:16 shape, so a full-width ring looks oversized; the real screen (and reference
+    // emulators like Majdata) leave a visible margin around it - the circle is roughly 78% of the frame width there.
     var ringScale: Double {
-        get { return num("ringScale", 0.85) }
+        get { return num("ringScale", 0.78) }
         set { d.set(newValue, forKey: "ringScale") }
     }
     var leftHanded: Bool {
@@ -97,5 +97,14 @@ final class Settings {
                   "topStripOn", "topStripWidth", "customBackgroundOn"] {
             d.removeObject(forKey: k)
         }
+    }
+
+    // Bumped whenever a stored value's *default* changes in a way old installs should pick up automatically
+    // (sideloading over an existing install keeps UserDefaults, so a changed fallback alone would never apply).
+    private static let currentSchemaVersion = 2
+    func migrateIfNeeded() {
+        let seen = d.integer(forKey: "settingsSchemaVersion")   // 0 if never set
+        if seen < 2 { d.removeObject(forKey: "ringScale") }     // v2: ring shrunk from 1.0 to fit an iPad's shape
+        d.set(Settings.currentSchemaVersion, forKey: "settingsSchemaVersion")
     }
 }

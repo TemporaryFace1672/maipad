@@ -320,15 +320,21 @@ namespace MaiTouchBridgeApp
         // window that reaches the physical bottom of the screen, and the (always-on-top) taskbar would then bleed into
         // the bottom of the circle. If that's happening, shift the window up by just enough to clear it, and put it
         // back exactly when the video stops.
+        // IMPORTANT: once nudged, the overflow check must be judged against the ORIGINAL (un-nudged) position, not the
+        // window's current (already-corrected) position - otherwise every frame sees "no overflow" right after nudging,
+        // undoes the nudge, sees the overflow again next frame, redoes it, forever (a visible up/down jitter every frame).
         bool nudged; int nudgeOrigX, nudgeOrigY;
         void ClearTaskbar(IntPtr game, int screenX, int screenY, int height)
         {
             RECT work = new RECT();
             if (!SystemParametersInfo(0x0030 /* SPI_GETWORKAREA */, 0, ref work, 0)) return;
-            int overflow = (screenY + height) - work.B;
+            int baseY = nudged ? nudgeOrigY : screenY;
+            int overflow = (baseY + height) - work.B;
             if (overflow <= 0) { RestoreTaskbarNudge(game); return; }
+            int targetY = baseY - overflow;
+            if (nudged && screenY == targetY) return;   // already there; nothing to do this frame
             if (!nudged) { nudgeOrigX = screenX; nudgeOrigY = screenY; nudged = true; }
-            SetWindowPos(game, IntPtr.Zero, screenX, screenY - overflow, 0, 0, 0x0001 | 0x0004 | 0x0010);
+            SetWindowPos(game, IntPtr.Zero, nudgeOrigX, targetY, 0, 0, 0x0001 | 0x0004 | 0x0010);
             Program.Log("video: nudged the game window up " + overflow + " px to clear the taskbar");
         }
 
