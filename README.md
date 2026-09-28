@@ -1,7 +1,6 @@
 # MaiPad
 
-Use an iPad (over a USB cable) as the touch panel and buttons for **maimai DX on PC** running with segatools, with the game
-picture streamed back onto the iPad so it feels like a small cabinet.
+an iPad controller for maimai DX
 
 - 34-sensor touch ring with multi-touch, plus Select / Test / Service / Coin / Card buttons
 - Game picture (the circle screen) streamed to the iPad at up to native 1080x1080, about 60 fps
@@ -9,8 +8,8 @@ picture streamed back onto the iPad so it feels like a small cabinet.
   latency readout
 - Everything runs over the USB cable (no Wi-Fi needed, no firewall prompts)
 
-> Not affiliated with SEGA. No game files, keychips or keys are included or needed from this repo. You must supply your own. Refrain from asking for game data in discussions
-> legally obtained game setup. This project only emulates the *input device*.
+> Not affiliated with SEGA. No game files, keychips or keys are included or needed from this repo. You must supply your own obtained setup. Refrain from asking for game data in discussions
+> This project only emulates the *input device*.
 
 created with the help of Claude
 ## How it works
