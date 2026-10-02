@@ -1,4 +1,4 @@
-param(
+﻿param(
   [switch]$Keep,            # VR mode: keep the game focused for as long as it runs
   [int]$BootSeconds = 100,  # keyboard mode: keep pulling focus to the game for this long after its window appears
   [int]$WaitSeconds = 240   # give up if the game window never appears
@@ -28,6 +28,8 @@ public class FocusGame {
   [DllImport("user32.dll")] static extern bool AttachThreadInput(uint a, uint b, bool f);
   [DllImport("user32.dll")] static extern bool IsIconic(IntPtr h);
   [DllImport("user32.dll")] static extern bool ShowWindow(IntPtr h, int cmd);
+  [DllImport("user32.dll")] static extern void SwitchToThisWindow(IntPtr h, bool alt);
+  [DllImport("user32.dll")] static extern void keybd_event(byte vk, byte scan, uint flags, UIntPtr extra);
   [DllImport("kernel32.dll")] static extern uint GetCurrentThreadId();
 
   public static IntPtr FindGame() {
@@ -43,15 +45,24 @@ public class FocusGame {
     return found;
   }
 
+  // SetForegroundWindow alone is refused by Windows when another window owns the foreground (focus-stealing
+  // protection). Escalate: attach to the foreground thread, then a synthetic Alt tap (which lifts the lock), then
+  // SwitchToThisWindow. Success is judged by whether the game really is in front afterwards.
   public static bool Focus(IntPtr game) {
     if (IsIconic(game)) ShowWindow(game, 9);
+    if (GetForegroundWindow() == game) return true;
     uint pid; uint ft = GetWindowThreadProcessId(GetForegroundWindow(), out pid);
     uint me = GetCurrentThreadId();
     AttachThreadInput(me, ft, true);
     BringWindowToTop(game);
-    bool ok = SetForegroundWindow(game);
+    SetForegroundWindow(game);
     AttachThreadInput(me, ft, false);
-    return ok;
+    if (GetForegroundWindow() == game) return true;
+    keybd_event(0x12, 0, 0, UIntPtr.Zero); keybd_event(0x12, 0, 2, UIntPtr.Zero);
+    SetForegroundWindow(game);
+    if (GetForegroundWindow() == game) return true;
+    SwitchToThisWindow(game, true);
+    return GetForegroundWindow() == game;
   }
 }
 "@
