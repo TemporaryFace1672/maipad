@@ -442,7 +442,7 @@ namespace MaiTouchBridgeApp
 
         static string baseDir, logPath, token;
         static int port = 8765, usbPort = 24870;
-        static bool noUsb = false;
+        static bool noUsb = false, noVideo = false;   // noVideo: ignore the app's video requests (controller only)
         static string deviceTcp = null;   // "host:port" - test hook that replaces usbmuxd with a direct TCP connection
         static string com1 = "COM5", com2 = "COM6";
         static bool anyWindow = false, noKeys = false;
@@ -479,6 +479,7 @@ namespace MaiTouchBridgeApp
                 else if (a == "--any-window") anyWindow = true;
                 else if (a == "--no-keys") noKeys = true;
                 else if (a == "--no-usb") noUsb = true;
+                else if (a == "--no-video") noVideo = true;
                 else if (a == "--usb-port" && i + 1 < args.Length) int.TryParse(args[++i], out usbPort);
                 else if (a == "--device-tcp" && i + 1 < args.Length) deviceTcp = args[++i];
             }
@@ -706,7 +707,7 @@ namespace MaiTouchBridgeApp
                         if (msgCount <= 12 && msg[0] != 'P') Log("iPad message: " + msg);
                         if (msg[0] == 'S') OnSensors(msg.Substring(1));
                         else if (msg[0] == 'B') OnExtra(msg.Substring(1));
-                        else if (msg[0] == 'V') vid.Configure(msg.Substring(1));
+                        else if (msg[0] == 'V') { if (!noVideo) vid.Configure(msg.Substring(1)); }
                         else if (msg[0] == 'P') vid.SendControl("O" + msg.Substring(1));
                     }
                 }
